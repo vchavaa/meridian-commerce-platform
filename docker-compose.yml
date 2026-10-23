@@ -1,0 +1,56 @@
+
+# Simulates the two-cluster, two-application topology locally on Windows/Mac
+services:
+  storefront-primary:
+    build: ./apps/storefront-ui
+    container_name: meridian-storefront-primary
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVICE_NAME=storefront-ui
+      - CLUSTER_NAME=meridian-gke-primary
+      - CLUSTER_REGION=us-central1
+      - POD_NAMESPACE=meridian-prod
+      - POD_NAME=storefront-ui-7c8d9f-x92k1
+      - ORDER_API_URL=http://order-service-primary:8081
+    depends_on:
+      - order-service-primary
+
+  order-service-primary:
+    build: ./apps/order-service
+    container_name: meridian-order-primary
+    ports:
+      - "8081:8081"
+    environment:
+      - SERVICE_NAME=order-service
+      - CLUSTER_NAME=meridian-gke-primary
+      - CLUSTER_REGION=us-central1
+      - POD_NAMESPACE=meridian-prod
+      - POD_NAME=order-service-5f4b2a-m19p4
+
+  storefront-secondary:
+    build: ./apps/storefront-ui
+    container_name: meridian-storefront-secondary
+    ports:
+      - "8082:8080"
+    environment:
+      - SERVICE_NAME=storefront-ui
+      - CLUSTER_NAME=meridian-gke-secondary
+      - CLUSTER_REGION=us-east1
+      - POD_NAMESPACE=meridian-prod
+      - POD_NAME=storefront-ui-8b2a1c-q44z9
+      - ORDER_API_URL=http://order-service-secondary:8081
+    depends_on:
+      - order-service-secondary
+
+  order-service-secondary:
+    build: ./apps/order-service
+    container_name: meridian-order-secondary
+    ports:
+      - "8083:8081"
+    environment:
+      - SERVICE_NAME=order-service
+      - CLUSTER_NAME=meridian-gke-secondary
+      - CLUSTER_REGION=us-east1
+      - POD_NAMESPACE=meridian-prod
+      - POD_NAME=order-service-9d3e7f-w81v2

@@ -1,0 +1,10 @@
+project_id            = "your-gcp-project-id"
+environment           = "prod"
+primary_region        = "us-central1"
+primary_zone          = "us-central1-a"
+secondary_region      = "us-east1"
+secondary_zone        = "us-east1-b"
+free_tier_compatible  = true
+node_machine_type     = "e2-medium"
+min_nodes_per_Cluster = 1
+max_nodes_per_cluster = 3

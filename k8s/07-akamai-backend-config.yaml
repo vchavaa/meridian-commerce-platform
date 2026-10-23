@@ -1,0 +1,23 @@
+# ============================================================================
+# Enhancement 3: Akamai CDN Origin Cloaking & True-Client-IP Preservation
+# Attaches Cloud Armor Policy 'meridian-akamai-origin-lockdown' to GKE NEGs
+# ============================================================================
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: meridian-akamai-origin-config
+  namespace: meridian-prod
+spec:
+  # Enforce Cloud Armor Akamai Site Shield IP + X-Akamai-Origin-Secret header check
+  securityPolicy:
+    name: "meridian-akamai-origin-lockdown"
+  # Custom Request Headers passed to GKE pods for client IP & region visibility
+  customRequestHeaders:
+    headers:
+      - "X-Origin-Cluster-Region:{client_region}"
+  healthCheck:
+    checkIntervalSec: 10
+    timeoutSec: 5
+    type: HTTP
+    port: 8080
+    requestPath: /readyz

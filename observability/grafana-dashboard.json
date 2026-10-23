@@ -1,0 +1,223 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "1. Application Error Rate (%) Over Time [BigQuery]",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "meridian-bq-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "WITH raw_logs AS (\n  SELECT TO_JSON_STRING(log_record) AS record, 0 AS source_priority\n  FROM `cs-512516.logs_ingest.cloud_logs` AS log_record\n  UNION ALL\n  SELECT TO_JSON_STRING(log_record) AS record, 1 AS source_priority\n  FROM `cs-512516.logs_ingest.live_docker_ingested_logs` AS log_record\n), extracted_logs AS (\n  SELECT\n    record,\n    source_priority,\n    SAFE_CAST(COALESCE(JSON_VALUE(record, '$.timestamp'), JSON_VALUE(record, '$.time')) AS TIMESTAMP) AS timestamp,\n    COALESCE(JSON_VALUE(record, '$.service'), JSON_VALUE(record, '$.jsonPayload.service'), JSON_VALUE(record, '$.resource.labels.container_name')) AS service,\n    COALESCE(JSON_VALUE(record, '$.cluster_name'), JSON_VALUE(record, '$.jsonPayload.cluster_name'), JSON_VALUE(record, '$.resource.labels.cluster_name')) AS cluster_name,\n    COALESCE(JSON_VALUE(record, '$.severity'), JSON_VALUE(record, '$.jsonPayload.severity')) AS severity,\n    COALESCE(JSON_VALUE(record, '$.namespace'), JSON_VALUE(record, '$.jsonPayload.namespace'), JSON_VALUE(record, '$.resource.labels.namespace_name'), 'meridian-prod') AS namespace,\n    COALESCE(JSON_VALUE(record, '$.reason'), JSON_VALUE(record, '$.jsonPayload.reason')) AS reason,\n    COALESCE(JSON_VALUE(record, '$.event_type'), JSON_VALUE(record, '$.jsonPayload.event_type')) AS event_type,\n    COALESCE(JSON_VALUE(record, '$.textPayload'), JSON_VALUE(record, '$.text_payload')) AS text_payload,\n    COALESCE(JSON_VALUE(record, '$.pod_name'), JSON_VALUE(record, '$.jsonPayload.pod_name'), JSON_VALUE(record, '$.resource.labels.pod_name')) AS pod_name,\n    COALESCE(JSON_VALUE(record, '$.error_scenario'), JSON_VALUE(record, '$.jsonPayload.error_scenario')) AS error_scenario,\n    COALESCE(JSON_VALUE(record, '$.message'), JSON_VALUE(record, '$.jsonPayload.message')) AS message,\n    COALESCE(JSON_VALUE(record, '$.trace_id'), JSON_VALUE(record, '$.trace'), JSON_VALUE(record, '$.log_gapis_trace'), JSON_VALUE(record, '$.jsonPayload.trace')) AS trace_id,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.httpRequest.status') AS INT64)) AS status_code,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.latency_ms') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.latency_ms') AS FLOAT64)) AS latency_ms,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.cpu_utilization_pct') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.cpu_utilization_pct') AS FLOAT64)) AS cpu_utilization_pct,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.memory_used_mb') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.memory_used_mb') AS FLOAT64)) AS memory_used_mb\n  FROM raw_logs\n), logs AS (\n  SELECT * EXCEPT (record, source_priority)\n  FROM extracted_logs\n  QUALIFY ROW_NUMBER() OVER (\n    PARTITION BY IF(error_scenario = 'injected_container_error', trace_id, record)\n    ORDER BY source_priority\n  ) = 1\n)\nSELECT TIMESTAMP_TRUNC(timestamp, MINUTE) AS time,\n  CONCAT(service, ' / ', cluster_name) AS metric,\n  SAFE_DIVIDE(COUNTIF(severity = 'ERROR' OR status_code >= 500) * 100.0, COUNT(*)) AS value\nFROM logs\nWHERE $__timeFilter(timestamp) AND service IN ('storefront-ui', 'order-service')\nGROUP BY 1, 2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "2. Pod Restart Counts by Namespace & Workload [BigQuery]",
+      "type": "barchart",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "meridian-bq-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "WITH raw_logs AS (\n  SELECT TO_JSON_STRING(log_record) AS record, 0 AS source_priority\n  FROM `cs-512516.logs_ingest.cloud_logs` AS log_record\n  UNION ALL\n  SELECT TO_JSON_STRING(log_record) AS record, 1 AS source_priority\n  FROM `cs-512516.logs_ingest.live_docker_ingested_logs` AS log_record\n), extracted_logs AS (\n  SELECT\n    record,\n    source_priority,\n    SAFE_CAST(COALESCE(JSON_VALUE(record, '$.timestamp'), JSON_VALUE(record, '$.time')) AS TIMESTAMP) AS timestamp,\n    COALESCE(JSON_VALUE(record, '$.service'), JSON_VALUE(record, '$.jsonPayload.service'), JSON_VALUE(record, '$.resource.labels.container_name')) AS service,\n    COALESCE(JSON_VALUE(record, '$.cluster_name'), JSON_VALUE(record, '$.jsonPayload.cluster_name'), JSON_VALUE(record, '$.resource.labels.cluster_name')) AS cluster_name,\n    COALESCE(JSON_VALUE(record, '$.severity'), JSON_VALUE(record, '$.jsonPayload.severity')) AS severity,\n    COALESCE(JSON_VALUE(record, '$.namespace'), JSON_VALUE(record, '$.jsonPayload.namespace'), JSON_VALUE(record, '$.resource.labels.namespace_name'), 'meridian-prod') AS namespace,\n    COALESCE(JSON_VALUE(record, '$.reason'), JSON_VALUE(record, '$.jsonPayload.reason')) AS reason,\n    COALESCE(JSON_VALUE(record, '$.event_type'), JSON_VALUE(record, '$.jsonPayload.event_type')) AS event_type,\n    COALESCE(JSON_VALUE(record, '$.textPayload'), JSON_VALUE(record, '$.text_payload')) AS text_payload,\n    COALESCE(JSON_VALUE(record, '$.pod_name'), JSON_VALUE(record, '$.jsonPayload.pod_name'), JSON_VALUE(record, '$.resource.labels.pod_name')) AS pod_name,\n    COALESCE(JSON_VALUE(record, '$.error_scenario'), JSON_VALUE(record, '$.jsonPayload.error_scenario')) AS error_scenario,\n    COALESCE(JSON_VALUE(record, '$.message'), JSON_VALUE(record, '$.jsonPayload.message')) AS message,\n    COALESCE(JSON_VALUE(record, '$.trace_id'), JSON_VALUE(record, '$.trace'), JSON_VALUE(record, '$.log_gapis_trace'), JSON_VALUE(record, '$.jsonPayload.trace')) AS trace_id,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.httpRequest.status') AS INT64)) AS status_code,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.latency_ms') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.latency_ms') AS FLOAT64)) AS latency_ms,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.cpu_utilization_pct') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.cpu_utilization_pct') AS FLOAT64)) AS cpu_utilization_pct,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.memory_used_mb') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.memory_used_mb') AS FLOAT64)) AS memory_used_mb\n  FROM raw_logs\n), logs AS (\n  SELECT * EXCEPT (record, source_priority)\n  FROM extracted_logs\n  QUALIFY ROW_NUMBER() OVER (\n    PARTITION BY IF(error_scenario = 'injected_container_error', trace_id, record)\n    ORDER BY source_priority\n  ) = 1\n)\nSELECT CONCAT(namespace, ' / ', service, ' (', cluster_name, ')') AS workload,\n  COUNTIF(event_type = 'POD_RESTART' OR reason IN ('BackOff', 'OOMKilled', 'ContainerCannotRun', 'Error') OR text_payload LIKE '%Back-off restarting failed container%') AS restarts\nFROM logs\nWHERE $__timeFilter(timestamp)\nGROUP BY 1 ORDER BY restarts DESC"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "3. Request Latency Percentiles (p50, p95, p99) [BigQuery]",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "meridian-bq-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "WITH raw_logs AS (\n  SELECT TO_JSON_STRING(log_record) AS record, 0 AS source_priority\n  FROM `cs-512516.logs_ingest.cloud_logs` AS log_record\n  UNION ALL\n  SELECT TO_JSON_STRING(log_record) AS record, 1 AS source_priority\n  FROM `cs-512516.logs_ingest.live_docker_ingested_logs` AS log_record\n), extracted_logs AS (\n  SELECT\n    record,\n    source_priority,\n    SAFE_CAST(COALESCE(JSON_VALUE(record, '$.timestamp'), JSON_VALUE(record, '$.time')) AS TIMESTAMP) AS timestamp,\n    COALESCE(JSON_VALUE(record, '$.service'), JSON_VALUE(record, '$.jsonPayload.service'), JSON_VALUE(record, '$.resource.labels.container_name')) AS service,\n    COALESCE(JSON_VALUE(record, '$.cluster_name'), JSON_VALUE(record, '$.jsonPayload.cluster_name'), JSON_VALUE(record, '$.resource.labels.cluster_name')) AS cluster_name,\n    COALESCE(JSON_VALUE(record, '$.severity'), JSON_VALUE(record, '$.jsonPayload.severity')) AS severity,\n    COALESCE(JSON_VALUE(record, '$.namespace'), JSON_VALUE(record, '$.jsonPayload.namespace'), JSON_VALUE(record, '$.resource.labels.namespace_name'), 'meridian-prod') AS namespace,\n    COALESCE(JSON_VALUE(record, '$.reason'), JSON_VALUE(record, '$.jsonPayload.reason')) AS reason,\n    COALESCE(JSON_VALUE(record, '$.event_type'), JSON_VALUE(record, '$.jsonPayload.event_type')) AS event_type,\n    COALESCE(JSON_VALUE(record, '$.textPayload'), JSON_VALUE(record, '$.text_payload')) AS text_payload,\n    COALESCE(JSON_VALUE(record, '$.pod_name'), JSON_VALUE(record, '$.jsonPayload.pod_name'), JSON_VALUE(record, '$.resource.labels.pod_name')) AS pod_name,\n    COALESCE(JSON_VALUE(record, '$.error_scenario'), JSON_VALUE(record, '$.jsonPayload.error_scenario')) AS error_scenario,\n    COALESCE(JSON_VALUE(record, '$.message'), JSON_VALUE(record, '$.jsonPayload.message')) AS message,\n    COALESCE(JSON_VALUE(record, '$.trace_id'), JSON_VALUE(record, '$.trace'), JSON_VALUE(record, '$.log_gapis_trace'), JSON_VALUE(record, '$.jsonPayload.trace')) AS trace_id,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.httpRequest.status') AS INT64)) AS status_code,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.latency_ms') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.latency_ms') AS FLOAT64)) AS latency_ms,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.cpu_utilization_pct') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.cpu_utilization_pct') AS FLOAT64)) AS cpu_utilization_pct,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.memory_used_mb') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.memory_used_mb') AS FLOAT64)) AS memory_used_mb\n  FROM raw_logs\n), logs AS (\n  SELECT * EXCEPT (record, source_priority)\n  FROM extracted_logs\n  QUALIFY ROW_NUMBER() OVER (\n    PARTITION BY IF(error_scenario = 'injected_container_error', trace_id, record)\n    ORDER BY source_priority\n  ) = 1\n)\nSELECT TIMESTAMP_TRUNC(timestamp, MINUTE) AS time,\n  APPROX_QUANTILES(latency_ms, 100)[OFFSET(50)] AS p50_ms,\n  APPROX_QUANTILES(latency_ms, 100)[OFFSET(95)] AS p95_ms,\n  APPROX_QUANTILES(latency_ms, 100)[OFFSET(99)] AS p99_ms\nFROM logs\nWHERE $__timeFilter(timestamp) AND latency_ms IS NOT NULL\nGROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "4. Resource Utilization Trends (CPU % & Memory MB) [BigQuery / Monitoring]",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "meridian-bq-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "WITH raw_logs AS (\n  SELECT TO_JSON_STRING(log_record) AS record, 0 AS source_priority\n  FROM `cs-512516.logs_ingest.cloud_logs` AS log_record\n  UNION ALL\n  SELECT TO_JSON_STRING(log_record) AS record, 1 AS source_priority\n  FROM `cs-512516.logs_ingest.live_docker_ingested_logs` AS log_record\n), extracted_logs AS (\n  SELECT\n    record,\n    source_priority,\n    SAFE_CAST(COALESCE(JSON_VALUE(record, '$.timestamp'), JSON_VALUE(record, '$.time')) AS TIMESTAMP) AS timestamp,\n    COALESCE(JSON_VALUE(record, '$.service'), JSON_VALUE(record, '$.jsonPayload.service'), JSON_VALUE(record, '$.resource.labels.container_name')) AS service,\n    COALESCE(JSON_VALUE(record, '$.cluster_name'), JSON_VALUE(record, '$.jsonPayload.cluster_name'), JSON_VALUE(record, '$.resource.labels.cluster_name')) AS cluster_name,\n    COALESCE(JSON_VALUE(record, '$.severity'), JSON_VALUE(record, '$.jsonPayload.severity')) AS severity,\n    COALESCE(JSON_VALUE(record, '$.namespace'), JSON_VALUE(record, '$.jsonPayload.namespace'), JSON_VALUE(record, '$.resource.labels.namespace_name'), 'meridian-prod') AS namespace,\n    COALESCE(JSON_VALUE(record, '$.reason'), JSON_VALUE(record, '$.jsonPayload.reason')) AS reason,\n    COALESCE(JSON_VALUE(record, '$.event_type'), JSON_VALUE(record, '$.jsonPayload.event_type')) AS event_type,\n    COALESCE(JSON_VALUE(record, '$.textPayload'), JSON_VALUE(record, '$.text_payload')) AS text_payload,\n    COALESCE(JSON_VALUE(record, '$.pod_name'), JSON_VALUE(record, '$.jsonPayload.pod_name'), JSON_VALUE(record, '$.resource.labels.pod_name')) AS pod_name,\n    COALESCE(JSON_VALUE(record, '$.error_scenario'), JSON_VALUE(record, '$.jsonPayload.error_scenario')) AS error_scenario,\n    COALESCE(JSON_VALUE(record, '$.message'), JSON_VALUE(record, '$.jsonPayload.message')) AS message,\n    COALESCE(JSON_VALUE(record, '$.trace_id'), JSON_VALUE(record, '$.trace'), JSON_VALUE(record, '$.log_gapis_trace'), JSON_VALUE(record, '$.jsonPayload.trace')) AS trace_id,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.httpRequest.status') AS INT64)) AS status_code,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.latency_ms') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.latency_ms') AS FLOAT64)) AS latency_ms,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.cpu_utilization_pct') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.cpu_utilization_pct') AS FLOAT64)) AS cpu_utilization_pct,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.memory_used_mb') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.memory_used_mb') AS FLOAT64)) AS memory_used_mb\n  FROM raw_logs\n), logs AS (\n  SELECT * EXCEPT (record, source_priority)\n  FROM extracted_logs\n  QUALIFY ROW_NUMBER() OVER (\n    PARTITION BY IF(error_scenario = 'injected_container_error', trace_id, record)\n    ORDER BY source_priority\n  ) = 1\n)\nSELECT TIMESTAMP_TRUNC(timestamp, MINUTE) AS time,\n  CONCAT(cluster_name, ' - ', service) AS cluster_service,\n  AVG(cpu_utilization_pct) AS avg_cpu_pct,\n  AVG(memory_used_mb) AS avg_mem_mb\nFROM logs\nWHERE $__timeFilter(timestamp) AND (cpu_utilization_pct IS NOT NULL OR memory_used_mb IS NOT NULL)\nGROUP BY 1, 2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "5. HTTP Error Scenarios & Trace IDs [BigQuery]",
+      "type": "table",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "meridian-bq-ds"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH raw_logs AS (\n  SELECT TO_JSON_STRING(log_record) AS record, 0 AS source_priority\n  FROM `cs-512516.logs_ingest.cloud_logs` AS log_record\n  UNION ALL\n  SELECT TO_JSON_STRING(log_record) AS record, 1 AS source_priority\n  FROM `cs-512516.logs_ingest.live_docker_ingested_logs` AS log_record\n), extracted_logs AS (\n  SELECT\n    record,\n    source_priority,\n    SAFE_CAST(COALESCE(JSON_VALUE(record, '$.timestamp'), JSON_VALUE(record, '$.time')) AS TIMESTAMP) AS timestamp,\n    COALESCE(JSON_VALUE(record, '$.service'), JSON_VALUE(record, '$.jsonPayload.service'), JSON_VALUE(record, '$.resource.labels.container_name')) AS service,\n    COALESCE(JSON_VALUE(record, '$.cluster_name'), JSON_VALUE(record, '$.jsonPayload.cluster_name'), JSON_VALUE(record, '$.resource.labels.cluster_name')) AS cluster_name,\n    COALESCE(JSON_VALUE(record, '$.severity'), JSON_VALUE(record, '$.jsonPayload.severity')) AS severity,\n    COALESCE(JSON_VALUE(record, '$.namespace'), JSON_VALUE(record, '$.jsonPayload.namespace'), JSON_VALUE(record, '$.resource.labels.namespace_name'), 'meridian-prod') AS namespace,\n    COALESCE(JSON_VALUE(record, '$.reason'), JSON_VALUE(record, '$.jsonPayload.reason')) AS reason,\n    COALESCE(JSON_VALUE(record, '$.event_type'), JSON_VALUE(record, '$.jsonPayload.event_type')) AS event_type,\n    COALESCE(JSON_VALUE(record, '$.textPayload'), JSON_VALUE(record, '$.text_payload')) AS text_payload,\n    COALESCE(JSON_VALUE(record, '$.pod_name'), JSON_VALUE(record, '$.jsonPayload.pod_name'), JSON_VALUE(record, '$.resource.labels.pod_name')) AS pod_name,\n    COALESCE(JSON_VALUE(record, '$.error_scenario'), JSON_VALUE(record, '$.jsonPayload.error_scenario')) AS error_scenario,\n    COALESCE(JSON_VALUE(record, '$.message'), JSON_VALUE(record, '$.jsonPayload.message')) AS message,\n    COALESCE(JSON_VALUE(record, '$.trace_id'), JSON_VALUE(record, '$.trace'), JSON_VALUE(record, '$.log_gapis_trace'), JSON_VALUE(record, '$.jsonPayload.trace')) AS trace_id,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.status_code') AS INT64), SAFE_CAST(JSON_VALUE(record, '$.httpRequest.status') AS INT64)) AS status_code,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.latency_ms') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.latency_ms') AS FLOAT64)) AS latency_ms,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.cpu_utilization_pct') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.cpu_utilization_pct') AS FLOAT64)) AS cpu_utilization_pct,\n    COALESCE(SAFE_CAST(JSON_VALUE(record, '$.memory_used_mb') AS FLOAT64), SAFE_CAST(JSON_VALUE(record, '$.jsonPayload.memory_used_mb') AS FLOAT64)) AS memory_used_mb\n  FROM raw_logs\n), logs AS (\n  SELECT * EXCEPT (record, source_priority)\n  FROM extracted_logs\n  QUALIFY ROW_NUMBER() OVER (\n    PARTITION BY IF(error_scenario = 'injected_container_error', trace_id, record)\n    ORDER BY source_priority\n  ) = 1\n)\nSELECT timestamp, cluster_name, service, pod_name,\n  status_code AS http_status, reason, error_scenario, trace_id\nFROM logs\nWHERE $__timeFilter(timestamp) AND (severity = 'ERROR' OR status_code >= 500)\nORDER BY timestamp DESC LIMIT 100"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "gke",
+    "bigquery",
+    "multi-cluster",
+    "meridian"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "title": "Meridian Multi-Cluster GKE & BigQuery Observability",
+  "uid": "meridian-gke-obs-v1",
+  "version": 1
+}

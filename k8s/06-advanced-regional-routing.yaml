@@ -1,0 +1,108 @@
+# ============================================================================
+# Enhancement 1: Advanced Intra-Region Routing Rules (Canary, Header, Rewrite)
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront-ui-canary
+  namespace: meridian-prod
+  labels:
+    app: storefront-ui
+    track: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storefront-ui
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: storefront-ui
+        track: canary
+    spec:
+      serviceAccountName: meridian-app-ksa
+      containers:
+        - name: storefront-ui
+          image: us-central1-docker.pkg.dev/PROJECT_ID/meridian-containers/storefront-ui:1.1.0-canary
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: meridian-platform-config
+          env:
+            - name: RELEASE_TRACK
+              value: "canary"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront-ui-canary
+  namespace: meridian-prod
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: ClusterIP
+  selector:
+    app: storefront-ui
+    track: canary
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# GKE Gateway API HTTPRoute for Intra-Region Header Matching, URL Rewrite & 90/10 Canary Split
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: meridian-storefront-advanced-routing
+  namespace: meridian-prod
+spec:
+  parentRefs:
+    - name: meridian-regional-gateway
+  hostnames:
+    - "www.meridiansupply.com"
+  rules:
+    # Rule 1: Header-Based Routing (QA / Canary header X-Release-Track: canary)
+    - matches:
+        - headers:
+            - type: Exact
+              name: "X-Release-Track"
+              value: "canary"
+      backendRefs:
+        - name: storefront-ui-canary
+          port: 8080
+
+    # Rule 2: Path-Based URL Rewrite (/v1/catalog -> /api/catalog)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/catalog
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api/catalog
+      backendRefs:
+        - name: storefront-ui
+          port: 80
+
+    # Rule 3: Weighted Canary Split Within Region (90% Stable / 10% Canary)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: storefront-ui
+          port: 80
+          weight: 90
+        - name: storefront-ui-canary
+          port: 8080
+          weight: 10

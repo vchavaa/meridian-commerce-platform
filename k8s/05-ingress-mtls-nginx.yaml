@@ -1,0 +1,48 @@
+# ============================================================================
+# Enhancement 2: Option B — In-Cluster NGINX Ingress mTLS (Zero-GCP-Cost)
+# ============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ingress-ca-secret
+  namespace: meridian-prod
+type: Opaque
+data:
+  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURXekNDQWtPZ0F3SUJBZ0lVSVp0eEtZdVNTSzhtZnprZUg4eFMvdGt6SW5Vd0RRWUpLb1pJaHZjTkFRRUwKQlFBd1BURWhNQjhHQTFVRUF3d1lUV1Z5YVdScFlXNHRTVzVuY21WemN5MVNiMjkwTFVOQk1SZ3dGZ1lEVlFRSwpEQTlOWlhKcFpHbGhiaTFUZFhCd2JIa3dIaGNOTWpZeE1ESXpNVFl3TURJeldoY05NamN4TURJek1UWXdNREl6CldqQTlNU0V3SHdZRFZRUUREQmhOWlhKcFpHbGhiaTFKYm1keVpYTnpMVkp2YjNRdFEwRXhHREFXQmdOVkJBb00KRDAxbGNtbGthV0Z1TFZOMWNIQnNlVENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQgpBUFZlQyszY3pqNDgvT3lSbUNwc2RTaDY5K3VvbmtkcHh3dEZEeWlpQllaTUw3Y3d2NmZKQmM1V1RhcWpHVWNRCkpmK21OMGhJMlQ0R0x3ejExQk50VzhwNGUxL0o2TGN2ZlBXczFIbXI1bk42WSsvaTJNcXFDWEFHcWlXNWR3QXgKVVNGVE4xQnRBK2RyZmVIS241TzRFcjlBWHQ3VGVFZWdlZnlNKzQzVEJuWDhWRy9XUHhHcE5sbURDSGsxNVgreAphY2dicGxDZ2x6ZzZOSXFYOTNwRjlCcmQxdmhPNzRQTWlpQnhtbHh3WEIzdkpaYUlUTTFaTzNaazBjNjAxS1JmCkgzeDJ1T04yZkRJOC9paGo0UzEvYTcwNWU2RWZPUzAybDJYYzhPYk00T0xYalpldSsxUUd1ZFR6RHQwRzE0SjQKT3FsVERWTzlNQ1kyV1FEQ2RSa3I0YzhDQXdFQUFhTlRNRkV3SFFZRFZSME9CQllFRlBzNmdXKzFMOWVHMHBrUApMa2ZFNHNkSlByT1pNQjhHQTFVZEl3UVlNQmFBRlBzNmdXKzFMOWVHMHBrUExrZkU0c2RKUHJPWk1BOEdBMVVkCkV3RUIvd1FGTUFNQkFmOHdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBR3h0RDRNRE0vaHpHNCtFd2lmN3ltTEYKV3k5WmlxQkFYY2RkY1RMdnJwUHJmL2FtUndvb0pxTDhRakcrZjNkMUsxZy9BU09yZE15cTJaMkJ6QWNLcXU5MApZdVpBaGVvOXlhRzE5aWJsZU1WZkJ3d3JjcmRxZjFhZlk3akI4Z1JaeVJlYnpOL1hLcmZYam1Cc3lDSTZCcGl1CmM5aHZrK1pqNnlHbWdHME13VnVrb2ZjN1dFOFBLcHNaM1VpanpHcWdUQ1pBdElVVmsvb2FvUElxMGlPRnluaTcKT2xPak1YaWlZd1luVDMwanlJSWEvZGg5Z2tLZThqaENiVFVZU05BdFBnNnJnVjFWNUZ5ZU03RkFCdHZaQjQvKwpYVUtmNzRnc3RZMVFaTytiSDBhSUgxN0VWVU9KekdGSnMvUlVxSmV3MUdQemtXcFpGbHhLOWQ5QjRvTXUzeHc9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: meridian-nginx-mtls-ingress
+  namespace: meridian-prod
+  annotations:
+    # 1. Enforce strict mTLS client certificate verification at the Ingress layer
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    # 2. Reference the Root CA Secret stored in meridian-prod namespace
+    nginx.ingress.kubernetes.io/auth-tls-secret: "meridian-prod/ingress-ca-secret"
+    # 3. Maximum validation chain depth
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    # 4. Forward validated client subject DN (Ssl-Client-Subject-Dn) to backend pods
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    # 5. Preserve Akamai True-Client-IP & X-Cloud-Trace-Context headers
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: www.meridiansupply.com
+      http:
+        paths:
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 8081
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: storefront-ui
+                port:
+                  number: 80
