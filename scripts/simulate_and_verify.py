@@ -3,7 +3,7 @@
 Meridian Commerce Platform - End-to-End Verification & Observability Suite (v2)
 Verifies all 4 Enterprise Enhancements:
 1. Traffic Flip Management (Method C DRAIN_REGION /readyz 503 failover + capacity-scaler=0.0 + Intra-Region Canary/Rewrite)
-2. In-Cluster NGINX Ingress mTLS (Option B: Root CA + Client Cert Subject DN propagation)
+2. Simulated NGINX Ingress mTLS telemetry (not application identity verification)
 3. Akamai CDN Approach (Origin Cloaking + True-Client-IP & Akamai-Request-BC preservation)
 4. Logs Ingestion to GCP Log Bucket (meridian-gke-log-bucket), GCS Archive Bucket, and SIEM Pub/Sub Stream for Grafana
 """
@@ -16,6 +16,7 @@ import math
 import random
 import sqlite3
 import importlib.util
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,39 +34,48 @@ order_spec.loader.exec_module(order_module)
 
 
 def verify_live_endpoints():
-    print("\n[1/4] Verifying Web Apps + 4 Enterprise Enhancements (Traffic Flip, mTLS, Akamai True-Client-IP, Intra-Region Routing)...")
+    print("\n[1/4] Verifying app routing and request processing with isolated in-memory test doubles...")
 
     sim_headers = {
+        "Authorization": "Bearer simulation-only-token",
         "True-Client-IP": "198.51.100.77",
         "Akamai-Request-BC": "[a=23.45.12.88,b=99182736,c=g,n=US_OH_DELAWARE]",
-        "Ssl-Client-Subject-Dn": "CN=b2b-partner-client,O=Meridian-Partner",
-        "Ssl-Client-Verify": "SUCCESS",
         "X-Cloud-Trace-Context": "a1b2c3d4e5f60718293a4b5c6d7e8f90/1;o=1",
         "X-Release-Track": "canary",
     }
+    drain_state = {"value": False}
+    with patch.dict(os.environ, {"APP_ENV": "local", "LOCAL_ADMIN_TOKEN": "simulation-only-token"}):
+        with patch.object(storefront_app_module.region_state, "is_drained", side_effect=lambda region, fallback=False: drain_state["value"]), \
+             patch.object(storefront_app_module.region_state, "set_drained", side_effect=lambda region, state: drain_state.update(value=state)), \
+             patch.object(order_module.order_store, "create_order", side_effect=lambda order, key, request_hash, event_id: ("created", {**order, "created_at": datetime.now(timezone.utc)})):
+            st_cat, _, body_cat = storefront_app_module.process_request("GET", "/v1/catalog", headers=sim_headers)
+            cat_json = json.loads(body_cat)
+            print(f"  -> GET /v1/catalog : HTTP {st_cat} | Track: {cat_json['release_track']} | mTLS app identity: {cat_json['mtls_verified']}")
 
-    # 1. Test Intra-Region URL Rewrite (/v1/catalog -> /api/catalog) + Canary Header + Akamai True-Client-IP + mTLS DN
-    st_cat, _, body_cat = storefront_app_module.process_request("GET", "/v1/catalog", headers=sim_headers)
-    cat_json = json.loads(body_cat)
-    print(f"  -> [Enhancement 1 & 3] GET /v1/catalog (Rewrite + Canary) : HTTP {st_cat} | Track: {cat_json['release_track']} | Akamai True-Client-IP: {cat_json['true_client_ip']}")
-    print(f"  -> [Enhancement 2]     NGINX mTLS Client Subject DN       : {cat_json['mtls_client_subject']} (Verify: {cat_json['mtls_verified']})")
+            storefront_app_module.process_request(
+                "POST", "/api/admin/drain", headers=sim_headers,
+                body_bytes=b'{"drain":true}'
+            )
+            st_ready_drained, _, body_drained = storefront_app_module.process_request("GET", "/readyz", headers=sim_headers)
+            storefront_app_module.process_request(
+                "POST", "/api/admin/drain", headers=sim_headers,
+                body_bytes=b'{"drain":false}'
+            )
+            st_ready_restored, _, body_restored = storefront_app_module.process_request("GET", "/readyz", headers=sim_headers)
+            print(f"  -> Drain ON  (/readyz): HTTP {st_ready_drained} | Reason: {json.loads(body_drained)['reason']}")
+            print(f"  -> Drain OFF (/readyz): HTTP {st_ready_restored} | Ready: {json.loads(body_restored)['ready']}")
 
-    # 2. Test Method C Regional Traffic Flip (Drain us-central1 -> /readyz returns 503 -> Restore -> /readyz returns 200)
-    storefront_app_module.process_request("POST", "/api/admin/drain?enable=true", headers=sim_headers)
-    st_ready_drained, _, body_drained = storefront_app_module.process_request("GET", "/readyz", headers=sim_headers)
-    storefront_app_module.process_request("POST", "/api/admin/drain?enable=false", headers=sim_headers)
-    st_ready_restored, _, body_restored = storefront_app_module.process_request("GET", "/readyz", headers=sim_headers)
-    print(f"  -> [Enhancement 1]     Method C Drain ON  (/readyz)       : HTTP {st_ready_drained} | Failover Target: {json.loads(body_drained)['failover_target']}")
-    print(f"  -> [Enhancement 1]     Method C Drain OFF (/readyz)       : HTTP {st_ready_restored} | Ready: {json.loads(body_restored)['ready']}")
-
-    # 3. Test Order Service with Akamai True-Client-IP & mTLS DN preservation
-    st_ok, _, body_ok = order_module.process_request(
-        "POST", "/api/orders",
-        headers=sim_headers,
-        body_bytes=json.dumps({"sku": "MRD-101", "quantity": 2, "delay_ms": 15}).encode()
-    )
-    ord_json = json.loads(body_ok)
-    print(f"  -> [Enhancement 3 & 4] Order Service POST /api/orders     : HTTP {st_ok} | Order: {ord_json['order_id']} | True-Client-IP: {ord_json['true_client_ip']}")
+            st_ok, _, body_ok = order_module.process_request(
+                "POST", "/api/orders",
+                headers=sim_headers,
+                body_bytes=json.dumps({"sku": "MRD-101", "quantity": 2}).encode()
+            )
+            ord_json = json.loads(body_ok)
+            assert st_ok == 201, f"Expected order creation to return 201, got {st_ok}"
+            assert ord_json["true_client_ip"] == sim_headers["True-Client-IP"], (
+                "Order response did not preserve True-Client-IP"
+            )
+            print(f"  -> POST /api/orders : HTTP {st_ok} | Order: {ord_json['order_id']} | True-Client-IP: {ord_json['true_client_ip']}")
 
 
 def generate_telemetry_dataset():
@@ -355,7 +365,7 @@ def run_bigquery_sql_analytics(logs):
     for row in q1:
         print(f"    {row[0]:22s} | {row[1]:14s} | Track: {row[2]:6s} | Reqs: {row[3]:4d} | Errors: {row[4]:2d} ({row[5]:4.2f}%)")
 
-    print("\n  [Query 5] SIEM Audit Log Sample (Akamai True-Client-IP + NGINX mTLS Client DN):")
+    print("\n  [Query 5] Simulated SIEM sample (Akamai True-Client-IP + synthetic mTLS metadata):")
     q5 = cur.execute("""
         SELECT true_client_ip, mtls_client_subject, cluster_name, release_track, COUNT(*)
         FROM gke_logs

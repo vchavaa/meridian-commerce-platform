@@ -1,4 +1,4 @@
-project_id            = "your-gcp-project-id"
+project_id            = "cs-512516"
 environment           = "prod"
 primary_region        = "us-central1"
 primary_zone          = "us-central1-a"

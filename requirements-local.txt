@@ -1,0 +1,4 @@
+-r apps/storefront-ui/requirements.txt
+-r apps/order-service/requirements.txt
+matplotlib>=3.8,<4
+numpy>=1.26,<3

@@ -13,6 +13,8 @@ resource "google_project_service" "enabled_apis" {
     "cloudprofiler.googleapis.com",
     "bigquery.googleapis.com",
     "secretmanager.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "sqladmin.googleapis.com",
     "dns.googleapis.com",
     "iam.googleapis.com"
   ])
@@ -139,7 +141,7 @@ resource "google_compute_firewall" "allow_gclb_health_checks" {
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443", "8080", "8081", "10256"]
+    ports    = ["80", "443", "8080", "10256"]
   }
 
   source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
@@ -156,16 +158,7 @@ resource "google_compute_firewall" "allow_east_west_internal" {
 
   allow {
     protocol = "tcp"
-    ports    = ["0-65535"]
-  }
-
-  allow {
-    protocol = "udp"
-    ports    = ["0-65535"]
-  }
-
-  allow {
-    protocol = "icmp"
+    ports    = ["8080", "8081"]
   }
 
   source_ranges = [

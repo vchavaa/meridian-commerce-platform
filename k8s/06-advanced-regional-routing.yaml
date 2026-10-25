@@ -24,7 +24,7 @@ spec:
       serviceAccountName: meridian-app-ksa
       containers:
         - name: storefront-ui
-          image: us-central1-docker.pkg.dev/PROJECT_ID/meridian-containers/storefront-ui:1.1.0-canary
+          image: us-central1-docker.pkg.dev/cs-512516/meridian-containers/storefront-ui:1.1.0-canary
           ports:
             - containerPort: 8080
           envFrom:
@@ -57,7 +57,24 @@ spec:
       port: 8080
       targetPort: 8080
 ---
-# GKE Gateway API HTTPRoute for Intra-Region Header Matching, URL Rewrite & 90/10 Canary Split
+# GKE Gateway API internal listener for optional intra-region routing.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: meridian-regional-gateway
+  namespace: meridian-prod
+spec:
+  gatewayClassName: gke-l7-rilb
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: advanced-routing.meridiansupply.com
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# HTTPRoute for header matching, URL rewrite, and a 90/10 canary split.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -66,8 +83,9 @@ metadata:
 spec:
   parentRefs:
     - name: meridian-regional-gateway
+      sectionName: http
   hostnames:
-    - "www.meridiansupply.com"
+    - "advanced-routing.meridiansupply.com"
   rules:
     # Rule 1: Header-Based Routing (QA / Canary header X-Release-Track: canary)
     - matches:

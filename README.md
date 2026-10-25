@@ -1,164 +1,90 @@
-# Meridian Commerce Platform — Multi-Region GKE, Akamai CDN, NGINX mTLS, Traffic Flip & SIEM/Bucket Observability
+# Meridian Commerce Platform
 
-This repository contains the complete, production-ready implementation of the **Meridian Commerce Platform** (`meridian-commerce-platform`) on Google Cloud Platform (GCP), enhanced with four enterprise traffic, security, and observability patterns and engineered to run across four environments:
+Meridian Commerce is a reference implementation and deployment template for a Python storefront and order API. It includes a local Docker Compose topology, Kubernetes manifests, Terraform examples, and an offline simulator.
 
-1. **Local Windows PC** (PowerShell + Python or Docker Desktop / Kind)
-2. **Local Mac / Linux** (Bash + Python or Docker / Kind / Minikube)
-3. **Google Colab / Jupyter Notebook** (`Meridian_Platform_Demo_Notebook.ipynb`)
-4. **Google Cloud Platform (GCP Free Tier / Trial or Full Enterprise)** via modular **Terraform** (`terraform/`) and **Kubernetes Manifests** (`k8s/`)
+> **Deployment status:** This repository does not represent a live or verified GCP deployment. Cloud resources, DNS, certificates, Akamai configuration, external routing, and production secrets must be supplied and tested by the operator. See [Architecture and Design](./docs/ARCHITECTURE_AND_DESIGN.md) for implemented behavior and remaining boundaries, and the [Step-by-Step Guide](./docs/STEP_BY_STEP_GUIDE.md) before deployment.
 
-## 1. Repository Directory Structure
+## Components
 
-```text
-meridian-commerce-platform/
-├── README.md                                  # Complete Architecture & Enhancement Reference
-├── docker-compose.yml                         # Local 2-cluster, 2-app multi-container runner
-├── run-local.ps1                              # Windows PowerShell verification & live web server runner
-├── run-local.sh                               # macOS / Linux verification & live web server runner
-├── Meridian_Platform_Demo_Notebook.ipynb      # Self-contained Google Colab / Jupyter Notebook demo
-├── certs/                                     # Pre-generated X.509 Certificates for NGINX Ingress mTLS
-│   ├── ca.crt                                 # Root CA Certificate (mounted into ingress-ca-secret)
-│   ├── client.crt                             # Signed B2B Partner Client Certificate for mTLS testing
-│   └── client.key                             # Client Private Key for curl --cert / --key testing
-├── terraform/                                 # Deliverable 1: Infrastructure as Code (Terraform)
-│   ├── versions.tf                            # Terraform & Google provider version constraints
-│   ├── variables.tf                           # Configurable regions, machine types & free_tier_compatible flag
-│   ├── vpc.tf                                 # Custom Global VPC, alias-IP subnets, Cloud NAT, Firewalls
-│   ├── gke.tf                                 # Primary (us-central1) & Secondary (us-east1) GKE clusters + IAM
-│   ├── observability_security.tf              # GCP Log Bucket, GCS Archive, SIEM Pub/Sub Sink & Akamai Origin Cloaking
-│   ├── outputs.tf                             # Cluster endpoints, Global LB IP, Log Bucket & SIEM outputs
-│   └── terraform.tfvars.example               # Template variables file for quick setup
-├── apps/                                      # Deliverable 2: Two Stateless Web Applications
-│   ├── storefront-ui/                         # Web App A: Storefront UI (Port 8080) with Drain Toggle & Akamai/mTLS headers
-│   │   ├── app.py                             # Zero-dependency HTTP service with /readyz drain, True-Client-IP & mTLS logging
-│   │   ├── Dockerfile                         # Non-root production container image
-│   │   └── requirements.txt                   # Runtime requirements note
-│   └── order-service/                         # Web App B: Order & Fulfillment API (Port 8081)
-│       ├── app.py                             # Stateless REST API logging True-Client-IP, mTLS DN & trace hops
-│       ├── Dockerfile                         # Non-root production container image
-│       └── requirements.txt                   # Runtime requirements note
-├── k8s/                                       # Deliverable 3: Multi-Pod GKE & Traffic Management Manifests
-│   ├── 01-namespace-and-config.yaml           # Namespace, Workload Identity KSA, ConfigMap (with DRAIN_REGION), Secret
-│   ├── 02-storefront-ui.yaml                  # App A Deployment (3->10 pods), ClusterIP + NEG annotation, HPA (65% CPU)
-│   ├── 03-order-service.yaml                  # App B Deployment (3->8 pods), ClusterIP + NEG annotation, HPA (70% CPU)
-│   ├── 04-ingress-and-mci.yaml                # Global External Ingress & Multi-Cluster Ingress (MCI) definitions
-│   ├── 05-ingress-mtls-nginx.yaml             # Enhancement 2: Option B In-Cluster NGINX Ingress mTLS + ingress-ca-secret
-│   ├── 06-advanced-regional-routing.yaml      # Enhancement 1: Intra-Region HTTPRoute (Header match, URL Rewrite, 90/10 Canary)
-│   └── 07-akamai-backend-config.yaml          # Enhancement 3: BackendConfig binding Cloud Armor Akamai Origin Cloaking
-├── observability/                             # Deliverable 4: GCP Log Bucket, SIEM & Grafana Analytics
-│   ├── bigquery_queries.sql                   # BigQuery analyses over the two ingested JSONL tables
-│   ├── big_queries.sql                        # Alternative queries for Cloud Logging's linked _AllLogs dataset
-│   ├── grafana-dashboard.json                 # Importable 5-panel Grafana dashboard model
-│   ├── sample_cloud_logs.jsonl                # Duplicate sample export of cloud_logs.jsonl
-│   ├── cloud_logs.jsonl                       # Simulated multi-cluster JSONL telemetry
-│   ├── live_docker_ingested_logs.jsonl        # Captured app logs plus four injected error scenarios
-│   ├── grafana_dashboard_export.png           # Local 5-panel dashboard image with trace IDs
-│   └── architecture_diagram.png               # High-res end-to-end architecture diagram
-├── scripts/
-│   ├── simulate_and_verify.py                 # End-to-end verifier for all 4 enhancements, SQL runner & chart builder
-│   ├── traffic_flip_manager.ps1               # PowerShell CLI to drain/restore us-central1 (capacity-scaler & Method C)
-│   └── traffic_flip_manager.sh                # Bash CLI to drain/restore us-central1 (capacity-scaler & Method C)
-└── docs/                                      # Deliverable 5: Deep-Dive Documentation & Playbooks
-    ├── ARCHITECTURE_AND_DESIGN.md             # Design decisions, rationale, and Free Tier adaptations
-    ├── STEP_BY_STEP_GUIDE.md                  # Commands for Windows, Mac, Google Notebook, and GCP
-    └── TROUBLESHOOTING_SCENARIO.md            # Root-cause analysis & resolution of GKE Ingress 502 & Sink IAM
-```
+- `apps/storefront-ui`: catalog storefront, checkout forwarding, health/readiness, and authenticated regional drain endpoint.
+- `apps/order-service`: order creation, protected order listing, readiness/drain endpoint, and a transactional Pub/Sub outbox publisher.
+- `apps/common`: shared OIDC/local bearer authentication, PostgreSQL access, regional readiness state, and bounded HTTP server.
+- `docker-compose.yml`: PostgreSQL plus primary/secondary storefront and order-service containers for local functional testing.
+- `k8s/`: GKE workloads, public storefront ingress with Cloud Armor configuration, separate partner ingress requiring mTLS, and network policies.
+- `terraform/`: infrastructure examples for GKE, networking, Cloud SQL, Pub/Sub, IAM, and Cloud Armor.
+- `scripts/`: local simulation and operator helper scripts.
+- `observability/`: sample dashboards, queries, and simulation logs; these files do not indicate live telemetry.
 
-## 2. Deep Dive: The 4 Enterprise Enhancements Implemented
+## Run locally on Windows
 
-### Enhancement 1: Regional Traffic Flip Management & Intra-Region Advanced Routing
+Requirements: Docker Desktop with Docker Compose, Python 3.10+ available as `python`, and the local Python dependencies installed:
 
-1. **Disabling/Draining the Central Region (`us-central1`) Without Geo-DNS (`scripts/traffic_flip_manager.ps1` & `.sh`)**:
-   - **GCP BackendService Level (`capacity-scaler = 0.0`)**: Drains the `us-central1` Network Endpoint Group (NEG) at the Google Cloud Global Load Balancer layer so 100% of requests route to `us-east1` regardless of client IP or DNS caching.
-   - **Method C Readiness Drain Flag (`DRAIN_REGION: "true"` in `k8s/01-namespace-and-config.yaml` & `/api/admin/drain`)**: Both `apps/storefront-ui/app.py` and `apps/order-service/app.py` inspect `DRAIN_REGION` (and expose a live toggle button on `http://localhost:8080` calling `POST /api/admin/drain`). When enabled on `us-central1`, `/readyz` returns `HTTP 503 {"ready": false, "reason": "REGION_DRAINED_BY_OPERATOR", "failover_target": "us-east1"}`, causing GCLB or Akamai GTM health checks to immediately flip 100% of traffic to `us-east1`.
-2. **Advanced Intra-Region Routing Rules (`k8s/06-advanced-regional-routing.yaml`)**:
-   - **Rule 1 (Header-Based Routing)**: Requests carrying `X-Release-Track: canary` route exclusively to `storefront-ui-canary` pods (`port 8080`).
-   - **Rule 2 (URL Path Rewrite)**: Requests to `/v1/catalog` are rewritten in-flight to `/api/catalog` via `ReplacePrefixMatch`.
-   - **Rule 3 (Weighted Canary Split)**: Standard customer traffic within the active region is split **90% to `storefront-ui` (`stable`)** and **10% to `storefront-ui-canary` (`canary`)**.
+From PowerShell in the repository root:
 
-### Enhancement 2: Option B — In-Cluster NGINX Ingress mTLS (`k8s/05-ingress-mtls-nginx.yaml` & `certs/`)
-
-- **Pre-Generated X.509 PKI (`certs/ca.crt`, `certs/client.crt`, `certs/client.key`)**: Includes a valid Root CA (`CN=Meridian-Ingress-Root-CA`) and signed client certificate (`CN=b2b-partner-client,O=Meridian-Partner`).
-- **Kubernetes Secret & NGINX Annotations (`k8s/05-ingress-mtls-nginx.yaml`)**:
-  - Mounts `ca.crt` into `Secret/ingress-ca-secret` in `meridian-prod`.
-  - Enforces strict mutual TLS via `nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"`, `auth-tls-secret: "meridian-prod/ingress-ca-secret"`, and `auth-tls-pass-certificate-to-upstream: "true"`.
-- **Application Identity Auditing**: Both `storefront-ui` and `order-service` extract the forwarded `Ssl-Client-Subject-Dn` header, display it in the Storefront security bar, and record `mtls_client_subject` in every structured log entry.
-
-### Enhancement 3: Akamai CDN Approach + Origin Cloaking + `True-Client-IP` Preservation
-
-- **Cloud Armor Origin Cloaking (`terraform/observability_security.tf` & `k8s/07-akamai-backend-config.yaml`)**:
-  - `google_compute_security_policy.akamai_origin_cloaking_policy` (`meridian-akamai-origin-lockdown`) blocks direct-to-origin bypass attacks (`deny(403)` default) and allows traffic **only** when originating from Akamai Site Shield CIDRs (`inIpRange(origin.ip, '23.32.0.0/11')`) **and** carrying the secret header `x-akamai-origin-secret == 'mrd-akamai-edge-verified-9941'`.
-- **End-to-End `True-Client-IP` & Trace Propagation (`apps/storefront-ui/app.py` $
-ightarrow$ `apps/order-service/app.py`)**:
-  - `storefront-ui` extracts Akamai's `True-Client-IP`, `Akamai-Request-BC` (breadcrumb), and `X-Cloud-Trace-Context` headers, displays `True-Client-IP` on the live Storefront UI, and forwards all three headers on east-west `POST /api/checkout` calls to `order-service`.
-
-### Enhancement 4: Logs Ingestion to SIEM & GCP Buckets for Grafana Dashboard Creation
-
-In `terraform/observability_security.tf`, Cloud Logging routes all container (`k8s_container`), cluster (`k8s_cluster`), node (`k8s_node`), and load balancer (`http_load_balancer`) logs into three parallel destinations:
-
-| Log Destination Resource | Terraform Resource Name | Role in Observability & Grafana |
-| :--- | :--- | :--- |
-| **1. GCP Cloud Logging Analytics Bucket** | `google_logging_project_bucket_config.meridian_analytics_log_bucket` (`meridian-gke-log-bucket`) + `google_logging_linked_dataset.meridian_log_bucket_linked_bq` | Enables **Cloud Logging Log Analytics** (`enable_analytics = true`) and exposes the linked BigQuery dataset (`meridian_log_bucket_analytics._AllLogs`) for direct Cloud Logging analysis. |
-| **2. GCP Cloud Storage (GCS) Archive Bucket** | `google_storage_bucket.meridian_log_archive_bucket` + `google_logging_project_sink.gcs_archive_sink` | Writes immutable JSONL log batches to a regional GCS bucket with a 90-day lifecycle policy for compliance and cold storage. |
-| **3. Real-Time SIEM Pub/Sub Stream** | `google_pubsub_topic.siem_log_ingestion_topic` (`meridian-siem-log-stream`) + `google_logging_project_sink.siem_pubsub_sink` | Streams real-time logs (including Akamai `true_client_ip`, NGINX `mtls_client_subject`, and regional drain events) to Google SecOps Chronicle, Splunk, or Elastic SIEM. |
-
-**Operational access and alerting notes (configure in the target GCP environment):**
-- Cloud Monitoring alert policies can route notifications to distribution lists associated with the relevant ServiceNow support groups; map alert severity and affected service to the appropriate group.
-- Restrict Secret Manager access through IAM grants to the designated administrator group, following least privilege. Application identities should receive access only to the specific secrets they require, not broad administrative permissions.
-
-## 3. BigQuery Queries for Ingested GCS Logs (`observability/bigquery_queries.sql`)
-
-The local simulator generates a rolling six-hour telemetry window and writes
-`observability/cloud_logs.jsonl` plus its duplicate sample export
-`observability/sample_cloud_logs.jsonl`. It refreshes four deterministic HTTP
-5xx scenarios in `observability/live_docker_ingested_logs.jsonl` while
-preserving captured records. The five-panel Grafana dashboard queries
-`cloud_logs` and `live_docker_ingested_logs`, deduplicates the repeated
-injected scenarios by trace ID, and includes an error/trace table. The local
-dashboard image also includes that table. Use the generated files as local
-simulation data; the simulator does not retrieve live Google Cloud logs.
-
-Create external tables named `live_docker_ingested_logs` and `cloud_logs` in
-the `cs-512516.logs_ingest` BigQuery dataset using the objects
-`gs://<valid-bucket-name>/cs_cloud_logs/live_docker_ingested_logs.jsonl` and
-`gs://<valid-bucket-name>/cs_cloud_logs/cloud_logs.jsonl`. Use your actual
-valid GCS bucket name (bucket names cannot contain underscores), choose
-`NEWLINE_DELIMITED_JSON`, and enable schema auto-detection in the BigQuery
-console; SQL `CREATE EXTERNAL TABLE` does not support an `autodetect` option.
-The script reads both external tables as
-`cs-512516.logs_ingest.<table_name>`, normalizes the trace fields, and includes
-a final error/trace research query. Run it as a multi-statement query. The
-BigQuery service account must be able to read both objects.
-
-`big_queries.sql` is retained as an alternative for projects that query the
-Cloud Logging linked `_AllLogs` dataset directly; it is not the source for
-the current Grafana dashboard.
-
-## 4. Quickest Ways to Run & Demo All 4 Enhancements on Your Local PC
-
-### Docker Compose (Windows, macOS, or Linux)
-
-Start Docker Desktop (or the Docker Engine) and run these commands from the
-repository root:
-```shell
-docker compose up --build -d
-docker compose ps
-```
-Compose builds and starts both app services in both simulated clusters. Open
-the storefronts at `http://localhost:8080` (primary) and
-`http://localhost:8082` (secondary); the order-service endpoints are available
-at ports `8081` and `8083`, respectively. To inspect container output, run
-`docker compose logs -f`. Stop and remove the containers and network with
-`docker compose down`.
-
-### Windows PowerShell
 ```powershell
-cd meridian-commerce-platform
+python -m pip install -r requirements-local.txt
 .\run-local.ps1
 ```
-- This runs the 4-enhancement verification suite, exports the updated Grafana and Architecture PNGs, starts `order-service` (`:8081`) and `storefront-ui` (`:8080`), and opens `http://localhost:8080`.
-- On `http://localhost:8080`, click **"Toggle Region Drain (/readyz Failover)"** in the top-right bar (or run `.\scripts\traffic_flip_manager.ps1 -Action drain-local`) to flip `/readyz` to `HTTP 503` and test Method C regional failover live.
-- Test the intra-region URL rewrite and canary header from PowerShell:
-  ```powershell
-  Invoke-RestMethod -Uri "http://localhost:8080/v1/catalog" -Headers @{"True-Client-IP"="198.51.100.77"; "X-Release-Track"="canary"; "Ssl-Client-Subject-Dn"="CN=b2b-partner-client,O=Meridian-Partner"} | ConvertTo-Json
-  ```
+
+The runner executes the offline simulator, generates a temporary local admin token, and starts the containers. A local secret-agent sidecar writes it to a restricted shared Docker volume; the sidecar generates and persists a PostgreSQL password in that volume so the local database can retain its data across runs. The runner prints the bearer token. Keep it private and use it only for this local run. The local endpoints are:
+
+| Service | URL |
+| --- | --- |
+| Primary storefront | <http://localhost:8080> |
+| Primary order console/API | <http://localhost:8081> |
+| Secondary storefront | <http://localhost:8082> |
+| Secondary order console/API | <http://localhost:8083> |
+
+Press Ctrl+C to stop the runner and containers. The named PostgreSQL volume persists. Remove it only when you intentionally want to delete local order data:
+
+```powershell
+docker compose down --volumes
+```
+
+If upgrading a local database volume from an older runner version, its database password may not have been persisted. If the new local services cannot authenticate, back up any needed local data before intentionally recreating the local volumes with `docker compose down --volumes`.
+
+On macOS/Linux, run `./run-local.sh`. For direct API checks and manual Compose start/stop instructions, see the [Step-by-Step Guide](./docs/STEP_BY_STEP_GUIDE.md).
+
+## Authentication and data
+
+- Local admin APIs accept `Authorization: Bearer <LOCAL_ADMIN_TOKEN>` only when `APP_ENV=local`. The runner generates the token for the current run.
+- Production admin APIs verify Google OIDC ID tokens, the configured audience, verified email status, and the `ADMIN_ALLOWED_EMAILS` allowlist.
+- `X-IAM-Role` is not an authentication mechanism.
+- Order, idempotency, outbox, and regional drain state are stored in PostgreSQL. There is no in-memory success fallback when the database is unavailable.
+- Pub/Sub outbox delivery is at least once. Consumers must deduplicate using event ID.
+- Compose binds host ports to loopback and stores PostgreSQL data and its local-only database password in named Docker volumes.
+
+## Architecture and operational boundaries
+
+1. The public storefront is served through the GKE external Ingress, with Cloud Armor attached through its BackendConfig.
+2. The partner API is a separate NGINX ingress that requires client-certificate validation. Install ingress-nginx and provision its TLS/CA Kubernetes Secrets through the GKE SecretSync configuration. Cloud Armor on the public GKE ingress does not automatically protect this separate endpoint.
+3. The regional drain API updates PostgreSQL-backed readiness state. A readiness failure does not itself implement cross-region routing; configure and test global routing/Akamai failover separately.
+4. Terraform configures regional Cloud SQL HA in the primary region. This does not provide cross-region database failover; design and test backup/restore or replication and define RTO/RPO.
+5. Akamai Site Shield CIDRs and an origin secret are required Terraform inputs. The origin value is stored in Secret Manager, but Cloud Armor requires it in the policy expression; the Terraform state therefore contains sensitive policy data and must be protected. Configure Akamai to overwrite the origin-secret header.
+6. The Compose setup simulates two region-labelled app pairs sharing one local database. It does not emulate separate regional databases, GKE ingress, Cloud Armor, mTLS termination, or global failover.
+
+For detailed flows, security assumptions, scalability controls, and residual production work, read [Architecture and Design](./docs/ARCHITECTURE_AND_DESIGN.md). For external infrastructure prerequisites and operator triage, read the [Step-by-Step Guide](./docs/STEP_BY_STEP_GUIDE.md).
+
+## Local Technitium DNS demo
+
+The optional DNS example is independent of the app deployment. Create a `demo.test` Primary Zone in Technitium and add the records below to demonstrate a CNAME chain ending in a local A record:
+
+| Name | Type | Value |
+| --- | --- | --- |
+| `www` | CNAME | `edge.akamai.demo.test` |
+| `edge.akamai` | CNAME | `global-lb.demo.test` |
+| `global-lb` | A | `127.0.0.1` |
+
+Reuse an existing container if one already owns the name or ports. See the [DNS setup and troubleshooting steps](./docs/STEP_BY_STEP_GUIDE.md#5-optional-technitium-dns-demo). This does not configure public DNS, Akamai, or a GCP load balancer.
+
+## Secrets and credential hygiene
+
+Local Compose uses a secret-agent sidecar to stage the demo token and a generated database password in a Docker volume. The token is removed on clean shutdown; the database password remains alongside the persistent database volume and is removed only when that volume is intentionally deleted.
+
+For GKE, Terraform provisions Secret Manager entries for ingress certificates replicated in both cluster regions and grants a dedicated Kubernetes workload identity access only to those certificate/CA secrets. GKE's Secret Manager synchronization controller maps those values to the Kubernetes TLS/CA Secrets expected by the ingress controllers. Secret payloads must be added out of band; Terraform does not store certificate bytes. Create the Akamai origin secret out of band before the first Terraform plan because Terraform reads it into the sensitive Cloud Armor policy input. Current production app authentication and Cloud SQL access use OIDC and IAM respectively, so app pods do not need shared admin/database passwords.
+
+The Akamai origin value is held in Secret Manager and supplied to Terraform from a protected deployment environment. Cloud Armor embeds the comparison value in its policy expression, so Terraform state can contain the value even when the input is marked sensitive. Use encrypted remote state with strict access controls. No private certificate keys or production secret values belong in this repository. Certificate/key files and credentials previously present in the repository must be treated as compromised: revoke or rotate them and review Git history, clones, and caches. Removing files from the current checkout does not erase repository history.
+
+## Validation
+
+Run local verification with `python scripts/simulate_and_verify.py`, then exercise the Compose services using the runner. Terraform and Kubernetes manifests must be validated against the chosen GCP project, provider/controller versions, enabled APIs, IAM configuration, and cluster networking before deployment. No cloud apply or production deployment is performed by this project guide.

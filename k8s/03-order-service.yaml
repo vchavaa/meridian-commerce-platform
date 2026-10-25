@@ -23,9 +23,27 @@ spec:
         tier: backend
     spec:
       serviceAccountName: meridian-app-ksa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: order-service
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: order-service
       containers:
         - name: order-service
-          image: us-central1-docker.pkg.dev/PROJECT_ID/meridian-containers/order-service:1.0.0
+          image: us-central1-docker.pkg.dev/cs-512516/meridian-containers/order-service:1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8081
@@ -33,11 +51,19 @@ spec:
           envFrom:
             - configMapRef:
                 name: meridian-platform-config
-            - secretRef:
-                name: meridian-app-secrets
           env:
             - name: SERVICE_NAME
               value: "order-service"
+            - name: GOOGLE_OIDC_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: meridian-platform-config
+                  key: GOOGLE_OIDC_AUDIENCE
+            - name: ADMIN_ALLOWED_EMAILS
+              valueFrom:
+                configMapKeyRef:
+                  name: meridian-platform-config
+                  key: ADMIN_ALLOWED_EMAILS
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -53,6 +79,17 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            failureThreshold: 30
+            periodSeconds: 5
           readinessProbe:
             httpGet:
               path: /readyz
@@ -65,14 +102,42 @@ spec:
               port: 8081
             initialDelaySeconds: 10
             periodSeconds: 10
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+          args:
+            - "--structured-logs"
+            - "--auto-iam-authn"
+            - "--address=127.0.0.1"
+            - "--port=5432"
+            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
+          env:
+            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: meridian-platform-config
+                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: order-service
   namespace: meridian-prod
-  annotations:
-    cloud.google.com/neg: '{"ingress": true}'
 spec:
   type: ClusterIP
   selector:
@@ -101,3 +166,14 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service-pdb
+  namespace: meridian-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: order-service

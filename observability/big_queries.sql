@@ -3,9 +3,9 @@
 -- This older query set reads Cloud Logging's linked _AllLogs dataset directly.
 -- The current external-JSONL workflow and Grafana dashboard use
 -- observability/bigquery_queries.sql and cs-512516.logs_ingest tables instead.
--- Primary Source : `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+-- Primary Source : `cs-512516.meridian_log_bucket_analytics._AllLogs`
 --                  (Linked Dataset on GCP Logging Bucket `meridian-gke-log-bucket`)
--- Secondary Sink : `PROJECT_ID.meridian_gke_observability._AllLogs` & SIEM Stream
+-- Secondary Sink : `cs-512516.meridian_gke_observability._AllLogs` & SIEM Stream
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -27,7 +27,7 @@ SELECT
     2
   ) AS error_rate_pct
 FROM
-  `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+  `cs-512516.meridian_log_bucket_analytics._AllLogs`
 WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 HOUR)
   AND resource.type = 'k8s_container'
@@ -52,7 +52,7 @@ SELECT
   ) AS restart_count,
   MAX(timestamp) AS last_restart_timestamp
 FROM
-  `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+  `cs-512516.meridian_log_bucket_analytics._AllLogs`
 WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
 GROUP BY
@@ -74,7 +74,7 @@ SELECT
   APPROX_QUANTILES(CAST(jsonPayload.latency_ms AS FLOAT64), 100)[OFFSET(95)] AS p95_latency_ms,
   APPROX_QUANTILES(CAST(jsonPayload.latency_ms AS FLOAT64), 100)[OFFSET(99)] AS p99_latency_ms
 FROM
-  `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+  `cs-512516.meridian_log_bucket_analytics._AllLogs`
 WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 HOUR)
   AND resource.type = 'k8s_container'
@@ -96,7 +96,7 @@ SELECT
   ROUND(MAX(CAST(jsonPayload.cpu_utilization_pct AS FLOAT64)), 2) AS peak_cpu_pct,
   ROUND(AVG(CAST(jsonPayload.memory_used_mb AS FLOAT64)), 1) AS avg_memory_mb
 FROM
-  `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+  `cs-512516.meridian_log_bucket_analytics._AllLogs`
 WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 HOUR)
   AND resource.type = 'k8s_container'
@@ -123,7 +123,7 @@ SELECT
   CAST(jsonPayload.latency_ms AS FLOAT64) AS latency_ms,
   trace
 FROM
-  `PROJECT_ID.meridian_log_bucket_analytics._AllLogs`
+  `cs-512516.meridian_log_bucket_analytics._AllLogs`
 WHERE
   timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 6 HOUR)
   AND jsonPayload.true_client_ip IS NOT NULL

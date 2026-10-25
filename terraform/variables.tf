@@ -1,6 +1,7 @@
 variable "project_id" {
   description = "GCP Project ID where Meridian Commerce Platform resources will be provisioned."
   type        = string
+  default     = "cs-512516"
 }
 
 variable "environment" {
@@ -55,4 +56,35 @@ variable "max_nodes_per_cluster" {
   description = "Maximum nodes in the general workload pool per cluster."
   type        = number
   default     = 3
+}
+
+variable "cloudsql_tier" {
+  description = "Cloud SQL PostgreSQL machine tier. Regional HA is enabled and incurs ongoing cost."
+  type        = string
+  default     = "db-custom-1-3840"
+}
+
+variable "akamai_site_shield_cidrs" {
+  description = "Akamai Site Shield CIDR ranges allowed to reach the origin. Supply current values from Akamai."
+  type        = list(string)
+  validation {
+    condition     = length(var.akamai_site_shield_cidrs) > 0
+    error_message = "At least one verified Akamai Site Shield CIDR is required."
+  }
+}
+
+variable "akamai_origin_secret" {
+  description = "Secret header value configured on the Akamai origin. Retrieve it in the protected deployment environment; never commit it."
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = length(var.akamai_origin_secret) >= 32
+    error_message = "The Akamai origin secret must contain at least 32 characters."
+  }
+}
+
+variable "akamai_origin_secret_name" {
+  description = "Secret Manager secret ID storing the Akamai origin-header value."
+  type        = string
+  default     = "meridian-akamai-origin-secret"
 }

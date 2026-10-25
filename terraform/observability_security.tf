@@ -87,6 +87,17 @@ resource "google_pubsub_topic" "siem_log_ingestion_topic" {
   message_retention_duration = "86400s"
 }
 
+resource "google_pubsub_topic" "order_events" {
+  name                       = "meridian-order-events"
+  message_retention_duration = "604800s"
+}
+
+resource "google_pubsub_topic_iam_member" "order_events_publisher" {
+  topic  = google_pubsub_topic.order_events.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_service_account.app_workload_sa.email}"
+}
+
 resource "google_pubsub_subscription" "siem_log_subscription" {
   name                 = "meridian-siem-collector-sub"
   topic                = google_pubsub_topic.siem_log_ingestion_topic.name
@@ -144,24 +155,6 @@ resource "google_bigquery_dataset_iam_member" "sink_bq_writer" {
   member     = google_logging_project_sink.bigquery_log_sink.writer_identity
 }
 
-# Secret Manager Secret for Application B (Order Service)
-resource "google_secret_manager_secret" "order_service_secret" {
-  secret_id = "meridian-order-service-config"
-  replication {
-    auto {}
-  }
-  depends_on = [google_project_service.enabled_apis]
-}
-
-resource "google_secret_manager_secret_version" "order_service_secret_v1" {
-  secret      = google_secret_manager_secret.order_service_secret.id
-  secret_data = jsonencode({
-    payment_gateway_key  = "pk_live_meridian_98a7bc65d4e3"
-    akamai_origin_secret = "mrd-akamai-edge-verified-9941"
-    redis_pool_timeout   = 5
-  })
-}
-
 # Global Static IP for External HTTPS Load Balancer / Ingress
 resource "google_compute_global_address" "global_ingress_ip" {
   name        = "meridian-global-lb-ip"
@@ -206,7 +199,7 @@ resource "google_compute_security_policy" "akamai_origin_cloaking_policy" {
     priority = 1100
     match {
       expr {
-        expression = "inIpRange(origin.ip, '23.32.0.0/11') && request.headers['x-akamai-origin-secret'] == 'mrd-akamai-edge-verified-9941'"
+        expression = "(${join(" || ", [for cidr in var.akamai_site_shield_cidrs : "inIpRange(origin.ip, '${cidr}')"])}) && request.headers['x-akamai-origin-secret'] == '${var.akamai_origin_secret}'"
       }
     }
     description = "Allow verified Akamai Site Shield origin pulls"

@@ -4,6 +4,15 @@ metadata:
   name: meridian-prod
   labels:
     app.kubernetes.io/part-of: meridian-commerce
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meridian-secret-sync-ksa
+  namespace: meridian-prod
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -11,7 +20,7 @@ metadata:
   name: meridian-app-ksa
   namespace: meridian-prod
   annotations:
-    iam.gke.io/gcp-service-account: meridian-app-workload-sa@PROJECT_ID.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: meridian-app-workload-sa@cs-512516.iam.gserviceaccount.com
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -21,20 +30,14 @@ metadata:
 data:
   SITE_TITLE: "Meridian Supply Co."
   ORDER_API_URL: "http://order-service.meridian-prod.svc.cluster.local:8081"
-  REDIS_HOST: "10.30.0.15"
-  PUBSUB_TOPIC: "projects/PROJECT_ID/topics/order-events"
-  # Enhancement 1 (Method C): Set DRAIN_REGION to "true" in us-central1 to return HTTP 503 on /readyz
-  # and automatically fail over 100% of traffic to us-east1
+  APP_ENV: "production"
   DRAIN_REGION: "false"
   RELEASE_TRACK: "stable"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: meridian-app-secrets
-  namespace: meridian-prod
-type: Opaque
-stringData:
-  PAYMENT_GATEWAY_KEY: "pk_live_meridian_98a7bc65d4e3"
-  INTERNAL_AUTH_TOKEN: "mrd-internal-token-v1-99412"
-  X_AKAMAI_ORIGIN_SECRET: "mrd-akamai-edge-verified-9941"
+  DB_HOST: "127.0.0.1"
+  DB_PORT: "5432"
+  DB_NAME: "meridian"
+  DB_USER: "meridian-app-workload-sa@cs-512516.iam"
+  CLOUD_SQL_INSTANCE_CONNECTION_NAME: "cs-512516:us-central1:meridian-orders-db"
+  PUBSUB_TOPIC: "projects/cs-512516/topics/meridian-order-events"
+  GOOGLE_OIDC_AUDIENCE: "https://www.meridiansupply.com"
+  ADMIN_ALLOWED_EMAILS: "replace-with-operator-email@example.com"

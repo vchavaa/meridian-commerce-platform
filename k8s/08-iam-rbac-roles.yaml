@@ -1,0 +1,149 @@
+# ============================================================================
+# Local Kubernetes RBAC Mapping for GCP IAM Personas: Dev, Ops, SRE, and CI/CD
+# Can be applied and tested locally on Docker Desktop Kubernetes / Minikube / Kind
+# via: kubectl apply -f k8s/08-iam-rbac-roles.yaml
+# ============================================================================
+
+# 1. ServiceAccounts representing the 4 IAM Personas
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meridian-dev-sa
+  namespace: meridian-prod
+  annotations:
+    iam.gcp.equivalent/roles: "roles/container.viewer, roles/logging.viewer"
+    persona.meridian.io/role: "Developer (Read-Only Workloads, Logs & Traces)"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meridian-ops-sa
+  namespace: meridian-prod
+  annotations:
+    iam.gcp.equivalent/roles: "roles/container.clusterViewer, roles/monitoring.editor, roles/compute.networkAdmin"
+    persona.meridian.io/role: "Operations (ConfigMap/Drain Toggle, Pod Restart, Monitoring)"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meridian-sre-sa
+  namespace: meridian-prod
+  annotations:
+    iam.gcp.equivalent/roles: "roles/container.admin, roles/compute.loadBalancerAdmin, roles/secretmanager.secretAccessor"
+    persona.meridian.io/role: "Site Reliability Engineering (Full Traffic Flip, HPA, Ingress & Secrets)"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: meridian-cicd-sa
+  namespace: meridian-prod
+  annotations:
+    iam.gcp.equivalent/roles: "roles/artifactregistry.writer, roles/container.developer"
+    persona.meridian.io/role: "CI/CD Pipeline (Deployments, Services & Image Rollouts Only)"
+---
+# 2. Role for DEVELOPER (Read-Only Pods, Logs, Services, ConfigMaps; NO Secrets, NO Drain/Delete)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: meridian-dev-role
+  namespace: meridian-prod
+rules:
+  - apiGroups: ["", "apps", "autoscaling", "networking.k8s.io"]
+    resources: ["pods", "pods/log", "services", "deployments", "configmaps", "horizontalpodautoscalers", "ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+# 3. Role for OPERATIONS (Read All + Patch ConfigMaps for DRAIN_REGION + Restart Pods; NO Secret Read)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: meridian-ops-role
+  namespace: meridian-prod
+rules:
+  - apiGroups: ["", "apps", "autoscaling", "networking.k8s.io"]
+    resources: ["pods", "pods/log", "services", "deployments", "configmaps", "horizontalpodautoscalers", "ingresses"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"] # Restart unhealthy pods
+---
+# 4. Role for SRE (Full Reliability & Traffic Control including Secrets, HPA, Ingress & Drain)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: meridian-sre-role
+  namespace: meridian-prod
+rules:
+  - apiGroups: ["", "apps", "autoscaling", "networking.k8s.io", "gateway.networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+# 5. Role for CI/CD PIPELINE (Create/Update Deployments, Services & ConfigMaps; NO Secret Admin or RBAC changes)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: meridian-cicd-role
+  namespace: meridian-prod
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["", "networking.k8s.io"]
+    resources: ["services", "configmaps", "ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+# 6. RoleBindings binding each ServiceAccount to its Least-Privilege Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: meridian-dev-binding
+  namespace: meridian-prod
+subjects:
+  - kind: ServiceAccount
+    name: meridian-dev-sa
+    namespace: meridian-prod
+roleRef:
+  kind: Role
+  name: meridian-dev-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: meridian-ops-binding
+  namespace: meridian-prod
+subjects:
+  - kind: ServiceAccount
+    name: meridian-ops-sa
+    namespace: meridian-prod
+roleRef:
+  kind: Role
+  name: meridian-ops-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: meridian-sre-binding
+  namespace: meridian-prod
+subjects:
+  - kind: ServiceAccount
+    name: meridian-sre-sa
+    namespace: meridian-prod
+roleRef:
+  kind: Role
+  name: meridian-sre-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: meridian-cicd-binding
+  namespace: meridian-prod
+subjects:
+  - kind: ServiceAccount
+    name: meridian-cicd-sa
+    namespace: meridian-prod
+roleRef:
+  kind: Role
+  name: meridian-cicd-role
+  apiGroup: rbac.authorization.k8s.io

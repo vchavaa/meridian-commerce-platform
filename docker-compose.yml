@@ -1,56 +1,152 @@
 
-# Simulates the two-cluster, two-application topology locally on Windows/Mac
+# Simulates two regions locally; both replicas share durable PostgreSQL state.
 services:
+  secret-agent:
+    build:
+      context: .
+      dockerfile: apps/secret-agent/Dockerfile
+    environment:
+      LOCAL_ADMIN_TOKEN: ${LOCAL_ADMIN_TOKEN:?Set LOCAL_ADMIN_TOKEN before starting Compose}
+    volumes:
+      - local-secrets:/run/meridian-secrets
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "from pathlib import Path; p=Path('/run/meridian-secrets'); assert all((p/n).is_file() and (p/n).stat().st_size for n in ('postgres_password','local_admin_token'))"
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: meridian
+      POSTGRES_USER: meridian
+      POSTGRES_PASSWORD_FILE: /run/meridian-secrets/postgres_password
+    volumes:
+      - meridian-postgres-data:/var/lib/postgresql/data
+      - local-secrets:/run/meridian-secrets:ro
+    depends_on:
+      secret-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meridian -d meridian"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   storefront-primary:
-    build: ./apps/storefront-ui
-    container_name: meridian-storefront-primary
+    build:
+      context: .
+      dockerfile: apps/storefront-ui/Dockerfile
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${STOREFRONT_PRIMARY_PORT:-8080}:8080"
     environment:
       - SERVICE_NAME=storefront-ui
+      - APP_ENV=local
+      - LOCAL_ADMIN_TOKEN_FILE=/run/meridian-secrets/local_admin_token
       - CLUSTER_NAME=meridian-gke-primary
       - CLUSTER_REGION=us-central1
       - POD_NAMESPACE=meridian-prod
       - POD_NAME=storefront-ui-7c8d9f-x92k1
       - ORDER_API_URL=http://order-service-primary:8081
+      - DB_HOST=postgres
+      - DB_USER=meridian
+      - DB_PASSWORD_FILE=/run/meridian-secrets/postgres_password
+      - DB_NAME=meridian
+    volumes:
+      - local-secrets:/run/meridian-secrets:ro
     depends_on:
-      - order-service-primary
+      secret-agent:
+        condition: service_healthy
+      order-service-primary:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   order-service-primary:
-    build: ./apps/order-service
-    container_name: meridian-order-primary
+    build:
+      context: .
+      dockerfile: apps/order-service/Dockerfile
     ports:
-      - "8081:8081"
+      - "127.0.0.1:${ORDER_PRIMARY_PORT:-8081}:8081"
     environment:
       - SERVICE_NAME=order-service
+      - APP_ENV=local
+      - LOCAL_ADMIN_TOKEN_FILE=/run/meridian-secrets/local_admin_token
+      - DB_HOST=postgres
+      - DB_USER=meridian
+      - DB_PASSWORD_FILE=/run/meridian-secrets/postgres_password
+      - DB_NAME=meridian
       - CLUSTER_NAME=meridian-gke-primary
       - CLUSTER_REGION=us-central1
       - POD_NAMESPACE=meridian-prod
       - POD_NAME=order-service-5f4b2a-m19p4
+    depends_on:
+      secret-agent:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - local-secrets:/run/meridian-secrets:ro
 
   storefront-secondary:
-    build: ./apps/storefront-ui
-    container_name: meridian-storefront-secondary
+    build:
+      context: .
+      dockerfile: apps/storefront-ui/Dockerfile
     ports:
-      - "8082:8080"
+      - "127.0.0.1:${STOREFRONT_SECONDARY_PORT:-8082}:8080"
     environment:
       - SERVICE_NAME=storefront-ui
+      - APP_ENV=local
+      - LOCAL_ADMIN_TOKEN_FILE=/run/meridian-secrets/local_admin_token
       - CLUSTER_NAME=meridian-gke-secondary
       - CLUSTER_REGION=us-east1
       - POD_NAMESPACE=meridian-prod
       - POD_NAME=storefront-ui-8b2a1c-q44z9
       - ORDER_API_URL=http://order-service-secondary:8081
+      - DB_HOST=postgres
+      - DB_USER=meridian
+      - DB_PASSWORD_FILE=/run/meridian-secrets/postgres_password
+      - DB_NAME=meridian
+    volumes:
+      - local-secrets:/run/meridian-secrets:ro
     depends_on:
-      - order-service-secondary
+      secret-agent:
+        condition: service_healthy
+      order-service-secondary:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   order-service-secondary:
-    build: ./apps/order-service
-    container_name: meridian-order-secondary
+    build:
+      context: .
+      dockerfile: apps/order-service/Dockerfile
     ports:
-      - "8083:8081"
+      - "127.0.0.1:${ORDER_SECONDARY_PORT:-8083}:8081"
     environment:
       - SERVICE_NAME=order-service
+      - APP_ENV=local
+      - LOCAL_ADMIN_TOKEN_FILE=/run/meridian-secrets/local_admin_token
+      - DB_HOST=postgres
+      - DB_USER=meridian
+      - DB_PASSWORD_FILE=/run/meridian-secrets/postgres_password
+      - DB_NAME=meridian
       - CLUSTER_NAME=meridian-gke-secondary
       - CLUSTER_REGION=us-east1
       - POD_NAMESPACE=meridian-prod
       - POD_NAME=order-service-9d3e7f-w81v2
+    depends_on:
+      secret-agent:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - local-secrets:/run/meridian-secrets:ro
+
+volumes:
+  meridian-postgres-data:
+  local-secrets:

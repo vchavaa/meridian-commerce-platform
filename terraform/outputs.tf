@@ -39,3 +39,18 @@ output "artifact_registry_url" {
   description = "Artifact Registry Docker repository URL"
   value       = "${var.primary_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.meridian_repo.repository_id}"
 }
+
+output "cloudsql_instance_connection_name" {
+  description = "Cloud SQL Auth Proxy connection name for the PostgreSQL database."
+  value       = google_sql_database_instance.orders.connection_name
+}
+
+output "cloudsql_iam_database_user" {
+  description = "PostgreSQL IAM username for the application service account."
+  value       = trimsuffix(google_service_account.app_workload_sa.email, ".gserviceaccount.com")
+}
+
+output "order_events_topic" {
+  description = "Pub/Sub topic receiving confirmed order events from the transactional outbox."
+  value       = google_pubsub_topic.order_events.id
+}

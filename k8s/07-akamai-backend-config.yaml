@@ -11,10 +11,6 @@ spec:
   # Enforce Cloud Armor Akamai Site Shield IP + X-Akamai-Origin-Secret header check
   securityPolicy:
     name: "meridian-akamai-origin-lockdown"
-  # Custom Request Headers passed to GKE pods for client IP & region visibility
-  customRequestHeaders:
-    headers:
-      - "X-Origin-Cluster-Region:{client_region}"
   healthCheck:
     checkIntervalSec: 10
     timeoutSec: 5

@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+certs/*.crt
+certs/*.csr
+certs/*.key
+certs/*.srl
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.*
+terraform/terraform.tfvars

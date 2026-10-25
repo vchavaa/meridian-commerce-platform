@@ -33,10 +33,8 @@ resource "google_service_account" "app_workload_sa" {
 resource "google_project_iam_member" "app_workload_roles" {
   for_each = toset([
     "roles/logging.logWriter",
-    "roles/monitoring.metricWriter",
-    "roles/cloudtrace.agent",
-    "roles/cloudprofiler.agent",
-    "roles/secretmanager.secretAccessor"
+    "roles/cloudsql.client",
+    "roles/cloudsql.instanceUser"
   ])
 
   project = var.project_id
@@ -56,8 +54,9 @@ resource "google_service_account_iam_member" "workload_identity_binding" {
 # Cluster 1: Primary GKE Cluster (us-central1)
 # ----------------------------------------------------------------------------
 resource "google_container_cluster" "primary_cluster" {
-  name     = "meridian-gke-primary"
-  location = var.free_tier_compatible ? var.primary_zone : var.primary_region
+  name               = "meridian-gke-primary"
+  location           = var.free_tier_compatible ? var.primary_zone : var.primary_region
+  min_master_version = "1.33"
 
   network    = google_compute_network.meridian_vpc.name
   subnetwork = google_compute_subnetwork.gke_primary_subnet.name
@@ -67,6 +66,10 @@ resource "google_container_cluster" "primary_cluster" {
   deletion_protection      = false
 
   networking_mode = "VPC_NATIVE"
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
   ip_allocation_policy {
     cluster_secondary_range_name  = "gke-primary-pods"
     services_secondary_range_name = "gke-primary-services"
@@ -133,8 +136,9 @@ resource "google_container_node_pool" "primary_general_pool" {
 # Cluster 2: Secondary GKE Cluster (us-east1)
 # ----------------------------------------------------------------------------
 resource "google_container_cluster" "secondary_cluster" {
-  name     = "meridian-gke-secondary"
-  location = var.free_tier_compatible ? var.secondary_zone : var.secondary_region
+  name               = "meridian-gke-secondary"
+  location           = var.free_tier_compatible ? var.secondary_zone : var.secondary_region
+  min_master_version = "1.33"
 
   network    = google_compute_network.meridian_vpc.name
   subnetwork = google_compute_subnetwork.gke_secondary_subnet.name
@@ -144,6 +148,10 @@ resource "google_container_cluster" "secondary_cluster" {
   deletion_protection      = false
 
   networking_mode = "VPC_NATIVE"
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
   ip_allocation_policy {
     cluster_secondary_range_name  = "gke-secondary-pods"
     services_secondary_range_name = "gke-secondary-services"

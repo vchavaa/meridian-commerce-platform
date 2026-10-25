@@ -1,23 +1,22 @@
-# Standard GKE External Application Load Balancer Ingress (Free-Tier Compatible)
+# Public web entry: GKE external Application Load Balancer with HTTPS
+# and Cloud Armor attached to the storefront NEG via BackendConfig.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: meridian-global-ingress
+  name: meridian-public-ingress
   namespace: meridian-prod
   annotations:
     kubernetes.io/ingress.class: "gce"
     kubernetes.io/ingress.global-static-ip-name: "meridian-global-lb-ip"
 spec:
+  tls:
+    - hosts:
+        - www.meridiansupply.com
+      secretName: meridian-public-tls
   rules:
-    - http:
+    - host: www.meridiansupply.com
+      http:
         paths:
-          - path: /api/orders
-            pathType: Prefix
-            backend:
-              service:
-                name: order-service
-                port:
-                  number: 8081
           - path: /
             pathType: Prefix
             backend:
@@ -25,31 +24,3 @@ spec:
                 name: storefront-ui
                 port:
                   number: 80
----
-# Optional Multi-Cluster Ingress (MCI) Manifest when Fleet MCI is enabled
-# Note: Skip applying MultiClusterIngress if using GCP Free Trial without Fleet API
-apiVersion: networking.gke.io/v1
-kind: MultiClusterIngress
-metadata:
-  name: meridian-mci-global
-  namespace: meridian-prod
-  annotations:
-    networking.gke.io/static-ip: "meridian-global-lb-ip"
-spec:
-  template:
-    spec:
-      backend:
-        serviceName: storefront-ui-mcs
-        servicePort: 80
-      rules:
-        - host: www.meridiansupply.example.com
-          http:
-            paths:
-              - path: /api/orders
-                backend:
-                  serviceName: order-service-mcs
-                  servicePort: 8081
-              - path: /
-                backend:
-                  serviceName: storefront-ui-mcs
-                  servicePort: 80
