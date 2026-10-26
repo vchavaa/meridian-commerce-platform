@@ -20,7 +20,7 @@ metadata:
   name: meridian-app-ksa
   namespace: meridian-prod
   annotations:
-    iam.gke.io/gcp-service-account: meridian-app-workload-sa@cs-512516.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: meridian-app-workload-sa@PROJECT_ID_PLACEHOLDER.iam.gserviceaccount.com
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -36,8 +36,11 @@ data:
   DB_HOST: "127.0.0.1"
   DB_PORT: "5432"
   DB_NAME: "meridian"
-  DB_USER: "meridian-app-workload-sa@cs-512516.iam"
-  CLOUD_SQL_INSTANCE_CONNECTION_NAME: "cs-512516:us-central1:meridian-orders-db"
-  PUBSUB_TOPIC: "projects/cs-512516/topics/meridian-order-events"
+  DB_USER: "meridian-app-workload-sa@PROJECT_ID_PLACEHOLDER.iam"
+  CLOUD_SQL_INSTANCE_CONNECTION_NAME: "PROJECT_ID_PLACEHOLDER:us-central1:meridian-orders-db"
+  PUBSUB_TOPIC: "projects/PROJECT_ID_PLACEHOLDER/topics/meridian-order-events"
   GOOGLE_OIDC_AUDIENCE: "https://www.meridiansupply.com"
-  ADMIN_ALLOWED_EMAILS: "replace-with-operator-email@example.com"
+  # ADMIN_ALLOWED_EMAILS must be set by the operator before applying this manifest
+  # (comma-separated verified Google-identity emails). Leaving it blank denies all
+  # admin API callers in production (APP_ENV=production) by design.
+  ADMIN_ALLOWED_EMAILS: ""

@@ -52,10 +52,45 @@ CATALOG = [
 ]
 
 
-def extract_telemetry_headers(headers: dict):
+def _trusted_upstream_cidrs():
+    raw = os.environ.get("TRUSTED_UPSTREAM_CIDRS", "")
+    return tuple(cidr.strip() for cidr in raw.split(",") if cidr.strip())
+
+
+def _peer_is_trusted(peer_ip, trusted):
+    """Return True if the TCP peer sits inside any configured trusted-upstream CIDR.
+
+    When TRUSTED_UPSTREAM_CIDRS is empty the function returns True; this preserves
+    local-dev ergonomics where there is no edge in front of the pod. In production
+    (APP_ENV=production), callers MUST set TRUSTED_UPSTREAM_CIDRS to the GCLB /
+    Akamai Site Shield ranges or caller-supplied True-Client-IP values will be
+    zeroed before being logged or persisted.
+    """
+    if not trusted:
+        return True
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(peer_ip)
+    except (TypeError, ValueError):
+        return False
+    for cidr in trusted:
+        try:
+            if ip in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def extract_telemetry_headers(headers: dict, peer_ip: str = None):
     norm = {k.lower(): v for k, v in (headers or {}).items()}
     trace_id = norm.get("x-cloud-trace-context", uuid.uuid4().hex[:32]).split("/")[0]
-    true_client_ip = norm.get("true-client-ip") or norm.get("x-forwarded-for", "").split(",")[0].strip() or None
+    trusted = _trusted_upstream_cidrs()
+    if peer_ip and not _peer_is_trusted(peer_ip, trusted):
+        # Peer is not a known edge; do NOT trust proxy headers for client IP.
+        true_client_ip = None
+    else:
+        true_client_ip = norm.get("true-client-ip") or norm.get("x-forwarded-for", "").split(",")[0].strip() or None
     akamai_bc = norm.get("akamai-request-bc")
     release_override = norm.get("x-release-track", RELEASE_TRACK)
     return trace_id, true_client_ip, akamai_bc, None, "NOT_VERIFIED_BY_APPLICATION", None, release_override
@@ -97,13 +132,13 @@ def emit_structured_log(severity: str, message: str, method: str, http_status: i
     return record
 
 
-def process_request(method: str, raw_path: str, headers: dict = None, body_bytes: bytes = b""):
+def process_request(method: str, raw_path: str, headers: dict = None, body_bytes: bytes = b"", peer_ip: str = None):
     start = time.perf_counter()
     headers = headers or {}
     parsed = urlparse(raw_path)
     path = parsed.path
     query = parse_qs(parsed.query)
-    trace_id, true_client_ip, akamai_bc, mtls_subject, mtls_verified, mtls_certificate, track = extract_telemetry_headers(headers)
+    trace_id, true_client_ip, akamai_bc, mtls_subject, mtls_verified, mtls_certificate, track = extract_telemetry_headers(headers, peer_ip)
 
     if path == "/v1/catalog":
         path = "/api/catalog"
@@ -216,10 +251,24 @@ def process_request(method: str, raw_path: str, headers: dict = None, body_bytes
         }).encode("utf-8")
 
     if path == "/api/checkout" and method == "POST":
+        if not body_bytes:
+            return 400, "application/json", json.dumps({
+                "error": "Request body required",
+                "expected": {"sku": "MRD-xxx", "quantity": 1},
+                "trace_id": trace_id,
+            }).encode("utf-8")
         try:
-            payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {"sku": "MRD-101", "quantity": 1}
+            payload = json.loads(body_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            payload = {"sku": "MRD-101", "quantity": 1}
+            return 400, "application/json", json.dumps({
+                "error": "Request body must be valid JSON",
+                "trace_id": trace_id,
+            }).encode("utf-8")
+        if not isinstance(payload, dict) or "sku" not in payload:
+            return 400, "application/json", json.dumps({
+                "error": "Request body must include at least 'sku'",
+                "trace_id": trace_id,
+            }).encode("utf-8")
 
         forwarded_headers = {
             "Content-Type": "application/json",
@@ -324,13 +373,24 @@ def process_request(method: str, raw_path: str, headers: dict = None, body_bytes
   </header>
   <div class="sec-bar">
     <div>
-      <span>Client IP (trusted proxy header): <strong style="color:#1d4ed8;">{client_ip_html}</strong></span> &nbsp;|&nbsp;
-      <span>mTLS App Identity: <strong style="color:#15803d;">Not asserted</strong></span> &nbsp;|&nbsp;
+      <span>Client IP (edge-forwarded): <strong style="color:#1d4ed8;">{client_ip_html}</strong></span> &nbsp;|&nbsp;
+      <span>mTLS App Identity: <strong style="color:#15803d;">Not asserted (gate-only)</strong></span> &nbsp;|&nbsp;
       <span>Trace ID: <strong style="color:#b45309;">{trace_id_html}</strong></span>
     </div>
     <div style="display:flex; align-items:center; gap:0.5rem;">
+      <label style="font-size:0.78rem; color:#334155;">View as:</label>
+      <select id="persona-view" onchange="updatePersonaView()" style="font-size:0.78rem; padding:0.3rem 0.5rem; border-radius:4px; border:1px solid #cbd5e1;">
+        <option value="customer">Customer</option>
+        <option value="dev">Developer (view only)</option>
+        <option value="ops">Operations (view only)</option>
+        <option value="sre">SRE (view only)</option>
+        <option value="cicd">CI/CD (view only)</option>
+      </select>
       <button type="button" class="btn-drain" onclick="toggleRegionDrain()">Toggle Regional Readiness</button>
     </div>
+  </div>
+  <div id="persona-note" style="display:none; background:#fef3c7; border-left:4px solid #d97706; padding:0.5rem 1rem; font-family:monospace; font-size:0.8rem; color:#78350f;">
+    <strong>Demo persona view only.</strong> The <code>X-IAM-Role</code> header is NOT accepted for authorization anywhere in this system; actual access is granted by Kubernetes RBAC / GCP IAM (see <code>k8s/08-iam-rbac-roles.yaml</code> and <code>scripts/verify_iam_roles.py --live</code>).
   </div>
   <main>
     <h2 style="margin-bottom: 0.35rem;">Field Equipment Catalog</h2>
@@ -339,6 +399,20 @@ def process_request(method: str, raw_path: str, headers: dict = None, body_bytes
     <div id="status-box">Ready. Click "Order Now" to invoke Web App B (Order Service), or toggle regional readiness to make this instance return HTTP 503 from /readyz. External traffic routing must be configured separately.</div>
   </main>
   <script>
+    function updatePersonaView() {{
+      var sel = document.getElementById('persona-view');
+      var note = document.getElementById('persona-note');
+      var persona = sel.value;
+      sessionStorage.setItem('demo_persona_view', persona);
+      note.style.display = (persona === 'customer') ? 'none' : 'block';
+    }}
+    (function initPersona() {{
+      var persona = sessionStorage.getItem('demo_persona_view') || 'customer';
+      var sel = document.getElementById('persona-view');
+      if (sel) sel.value = persona;
+      updatePersonaView();
+    }})();
+
     async function placeOrder(sku) {{
       var box = document.getElementById('status-box');
       box.textContent = 'Submitting order for ' + sku + ' to Order Service (Web App B)...';
@@ -401,8 +475,14 @@ class StorefrontHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
 
+    def _peer_ip(self):
+        try:
+            return self.client_address[0]
+        except (IndexError, AttributeError):
+            return None
+
     def do_GET(self):
-        status, content_type, body = process_request("GET", self.path, dict(self.headers))
+        status, content_type, body = process_request("GET", self.path, dict(self.headers), peer_ip=self._peer_ip())
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -422,7 +502,7 @@ class StorefrontHandler(BaseHTTPRequestHandler):
         if len(body_bytes) != length:
             self.send_error(400, "Incomplete request body")
             return
-        status, content_type, body = process_request("POST", self.path, dict(self.headers), body_bytes)
+        status, content_type, body = process_request("POST", self.path, dict(self.headers), body_bytes, peer_ip=self._peer_ip())
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))

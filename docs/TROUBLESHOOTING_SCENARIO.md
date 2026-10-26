@@ -23,3 +23,58 @@ After deploying `storefront-ui` and `order-service` to `meridian-gke-primary` an
 
 *(Secondary Note: During observability setup, the Cloud Logging sink `meridian-gke-to-bigquery-sink` initially logged a permission error writing to BigQuery because the sink creates a unique Google-managed service account `service-<PROJECT_NUMBER>@gcp-sa-logging.iam.gserviceaccount.com`. We resolved this permanently in `terraform/observability_security.tf` by adding the `google_bigquery_dataset_iam_member.sink_bq_writer` resource granting `roles/bigquery.dataEditor` to `google_logging_project_sink.bigquery_log_sink.writer_identity`.)*
 
+---
+
+### Issue Encountered: Cloud Logging Sinks Silently Dropping Logs After New Writer-Identity Rotation
+
+#### 1. Symptom
+After enabling the two logging sinks (BigQuery sink `meridian-gke-to-bigquery-sink` and GCS sink `meridian-to-gcs-bucket-sink`) via `terraform/observability_security.tf`, `kubectl logs` continued to show application logs flowing, but:
+
+- The BigQuery external tables `PROJECT_ID.logs_ingest.cloud_logs` returned 0 rows for the current window.
+- The GCS archive bucket `PROJECT_ID-meridian-siem-log-archive` had no new objects under `cs_cloud_logs/`.
+- `gcloud logging sinks describe` showed both sinks as `ENABLED`.
+
+#### 2. Diagnosis & Root-Cause Investigation
+1. Confirmed the sinks were receiving log entries by inspecting metrics:
+   ```bash
+   gcloud logging metrics list --filter="name:sink"
+   # Expected non-zero exported_log_entries_count for both sinks.
+   ```
+   Both sinks had entries counted; the problem was at the destination.
+
+2. Inspected IAM policy on each destination:
+   ```bash
+   # BigQuery dataset:
+   bq show --format=prettyjson "$PROJECT_ID:logs_ingest" | jq '.access'
+   # GCS bucket:
+   gcloud storage buckets get-iam-policy "gs://$PROJECT_ID-meridian-siem-log-archive"
+   ```
+
+   Each log sink is created with a **unique Google-managed writer-identity** of the shape `service-<PROJECT_NUMBER>@gcp-sa-logging.iam.gserviceaccount.com`. The IAM bindings on both destinations referenced a *stale* writer-identity from a previous Terraform run — the identity rotates when sinks are destroyed and recreated.
+
+3. Confirmed by diffing Terraform state against live config:
+   ```bash
+   terraform plan -target=google_logging_project_sink.bigquery_log_sink
+   # Showed a changed `writer_identity` output not yet reflected in the IAM bindings.
+   ```
+
+#### 3. Resolution Implemented
+1. **Add explicit `writer_identity` IAM bindings in Terraform** (`terraform/observability_security.tf`) that reference the sink resource's own output, so recreation always re-grants the current identity:
+   ```hcl
+   resource "google_bigquery_dataset_iam_member" "sink_bq_writer" {
+     dataset_id = google_bigquery_dataset.logs_ingest.dataset_id
+     role       = "roles/bigquery.dataEditor"
+     member     = google_logging_project_sink.bigquery_log_sink.writer_identity
+   }
+
+   resource "google_storage_bucket_iam_member" "sink_gcs_writer" {
+     bucket = google_storage_bucket.siem_log_archive.name
+     role   = "roles/storage.objectCreator"
+     member = google_logging_project_sink.gcs_log_sink.writer_identity
+   }
+   ```
+
+2. **Verification**: Within 2-3 minutes of `terraform apply`, both the BigQuery external table and the GCS archive showed new rows and objects. The fix is permanent across sink rotation because the IAM binding is a function of the sink's live output.
+
+**Panel-defense note:** this is a common foot-gun — the Google-managed writer-identity looks static but rotates on resource recreation. Any Terraform or Pulumi config that hardcodes the identity will silently stop delivering logs after a resource replace.
+

@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 
@@ -9,6 +10,12 @@ from common.database import connect
 _CACHE_TTL_SECONDS = 2.0
 _cache = {}
 _cache_lock = threading.Lock()
+
+# When the control-store is unreachable and we have no cached value, choose
+# between fail-closed (treat as drained; readiness returns 503) and the legacy
+# fail-open behavior. Fail-closed is safer: a service that cannot see its drain
+# state should remove itself from rotation rather than silently serve traffic.
+_FAIL_CLOSED_ON_ERROR = os.environ.get("REGION_STATE_FAIL_CLOSED", "true").lower() == "true"
 
 
 def initialize():
@@ -30,7 +37,7 @@ def is_drained(region, fallback=False):
         cached = _cache.get(region)
         if cached and now - cached[0] < _CACHE_TTL_SECONDS:
             return cached[1]
-        previous = cached[1] if cached else fallback
+        previous = cached[1] if cached else None
     try:
         with connect() as connection:
             row = connection.execute(
@@ -38,15 +45,28 @@ def is_drained(region, fallback=False):
                 (region,),
             ).fetchone()
     except psycopg.Error as exc:
+        # Prefer the last cached value (bounded staleness) over fail-closed to
+        # avoid flapping on transient blips. If there is NO cached value, fail
+        # closed by default - the service cannot vouch for its drain state.
+        if previous is not None:
+            effective = previous
+            reason = "using last cached value"
+        elif _FAIL_CLOSED_ON_ERROR:
+            effective = True
+            reason = "no cache; failing closed (readiness=503)"
+        else:
+            effective = fallback
+            reason = f"no cache; using static fallback={fallback}"
         print(json.dumps({
             "severity": "ERROR",
-            "message": "Could not refresh regional drain state; using last known value",
+            "message": f"Could not refresh regional drain state; {reason}",
             "region": region,
             "database_error": type(exc).__name__,
+            "effective_drained": effective,
         }), flush=True)
         with _cache_lock:
-            _cache[region] = (now, previous)
-        return previous
+            _cache[region] = (now, effective)
+        return effective
     drained = row["drained"] if row else fallback
     with _cache_lock:
         _cache[region] = (now, drained)

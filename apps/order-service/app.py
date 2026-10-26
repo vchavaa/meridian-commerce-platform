@@ -47,10 +47,38 @@ PUBSUB_TOPIC = os.environ.get("PUBSUB_TOPIC", "")
 
 DRAIN_REGION_DEFAULT = os.environ.get("DRAIN_REGION", "false").lower() == "true"
 
-def extract_telemetry_headers(headers: dict):
+def _trusted_upstream_cidrs():
+    raw = os.environ.get("TRUSTED_UPSTREAM_CIDRS", "")
+    return tuple(cidr.strip() for cidr in raw.split(",") if cidr.strip())
+
+
+def _peer_is_trusted(peer_ip, trusted):
+    """Return True if the TCP peer is inside a trusted upstream CIDR, or if
+    no trusted set is configured (local-dev ergonomics)."""
+    if not trusted:
+        return True
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(peer_ip)
+    except (TypeError, ValueError):
+        return False
+    for cidr in trusted:
+        try:
+            if ip in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def extract_telemetry_headers(headers: dict, peer_ip: str = None):
     norm = {k.lower(): v for k, v in (headers or {}).items()}
     trace_id = norm.get("x-cloud-trace-context", uuid.uuid4().hex[:32]).split("/")[0]
-    true_client_ip = norm.get("true-client-ip") or norm.get("x-forwarded-for", "").split(",")[0].strip() or None
+    trusted = _trusted_upstream_cidrs()
+    if peer_ip and not _peer_is_trusted(peer_ip, trusted):
+        true_client_ip = None
+    else:
+        true_client_ip = norm.get("true-client-ip") or norm.get("x-forwarded-for", "").split(",")[0].strip() or None
     akamai_bc = norm.get("akamai-request-bc")
     release_track = norm.get("x-release-track", "stable")
     return trace_id, true_client_ip, akamai_bc, None, "NOT_VERIFIED_BY_APPLICATION", release_track
@@ -91,13 +119,13 @@ def emit_structured_log(severity: str, message: str, method: str, http_status: i
     return record
 
 
-def process_request(method: str, raw_path: str, headers: dict = None, body_bytes: bytes = b""):
+def process_request(method: str, raw_path: str, headers: dict = None, body_bytes: bytes = b"", peer_ip: str = None):
     start = time.perf_counter()
     headers = headers or {}
     parsed = urlparse(raw_path)
     path = parsed.path
     query = parse_qs(parsed.query)
-    trace_id, true_client_ip, akamai_bc, mtls_subject, mtls_verified, release_track = extract_telemetry_headers(headers)
+    trace_id, true_client_ip, akamai_bc, mtls_subject, mtls_verified, release_track = extract_telemetry_headers(headers, peer_ip)
 
     if path == "/healthz":
         return 200, "application/json", json.dumps({
@@ -466,8 +494,14 @@ class OrderHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
 
+    def _peer_ip(self):
+        try:
+            return self.client_address[0]
+        except (IndexError, AttributeError):
+            return None
+
     def do_GET(self):
-        status, content_type, body = process_request("GET", self.path, dict(self.headers))
+        status, content_type, body = process_request("GET", self.path, dict(self.headers), peer_ip=self._peer_ip())
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -487,7 +521,7 @@ class OrderHandler(BaseHTTPRequestHandler):
         if len(body_bytes) != length:
             self.send_error(400, "Incomplete request body")
             return
-        status, content_type, body = process_request("POST", self.path, dict(self.headers), body_bytes)
+        status, content_type, body = process_request("POST", self.path, dict(self.headers), body_bytes, peer_ip=self._peer_ip())
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))

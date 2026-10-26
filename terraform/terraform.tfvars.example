@@ -1,4 +1,4 @@
-project_id            = "cs-512516"
+project_id            = "PROJECT_ID_PLACEHOLDER"  # REQUIRED: replace with your GCP project ID
 environment           = "prod"
 primary_region        = "us-central1"
 primary_zone          = "us-central1-a"
@@ -8,3 +8,7 @@ free_tier_compatible  = true
 node_machine_type     = "e2-medium"
 min_nodes_per_Cluster = 1
 max_nodes_per_cluster = 3
+
+# Required by validation blocks in variables.tf (never commit real values):
+# akamai_site_shield_cidrs = ["23.32.0.0/11"]  # supply current Akamai Site Shield CIDRs
+# akamai_origin_secret     = "<at least 32 random characters>"  # supply via env / secret store

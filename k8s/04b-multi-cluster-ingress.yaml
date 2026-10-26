@@ -1,0 +1,56 @@
+# ============================================================================
+# Multi-Cluster Ingress (MCI) — real fleet-level cross-region routing.
+#
+# These resources are a *superset* of k8s/04-ingress-and-mci.yaml. That file
+# ships a single-cluster `kind: Ingress`; this file adds the real MCI pair
+# (MultiClusterService + MultiClusterIngress) that route one hostname across
+# both GKE clusters.
+#
+# Prerequisites (one-time per fleet):
+#   gcloud container fleet multi-cluster-ingress enable \
+#     --config-membership=projects/PROJECT_ID_PLACEHOLDER/locations/us-central1/memberships/meridian-gke-primary
+#   gcloud container fleet memberships register meridian-gke-primary ...
+#   gcloud container fleet memberships register meridian-gke-secondary ...
+#
+# Then: apply this file to the CONFIG CLUSTER only.
+# ============================================================================
+apiVersion: networking.gke.io/v1
+kind: MultiClusterService
+metadata:
+  name: storefront-ui-mcs
+  namespace: meridian-prod
+spec:
+  template:
+    spec:
+      selector:
+        app: storefront-ui
+        track: stable
+      ports:
+        - name: http
+          protocol: TCP
+          port: 80
+          targetPort: 8080
+---
+apiVersion: networking.gke.io/v1
+kind: MultiClusterIngress
+metadata:
+  name: meridian-global-mci
+  namespace: meridian-prod
+  annotations:
+    networking.gke.io/static-ip: meridian-global-lb-ip
+    # Attach Cloud Armor via BackendConfig on the per-cluster Service
+    # (k8s/02-storefront-ui.yaml references meridian-akamai-origin-config).
+spec:
+  template:
+    spec:
+      backend:
+        serviceName: storefront-ui-mcs
+        servicePort: 80
+      rules:
+        - host: www.meridiansupply.com
+          http:
+            paths:
+              - path: /*
+                backend:
+                  serviceName: storefront-ui-mcs
+                  servicePort: 80

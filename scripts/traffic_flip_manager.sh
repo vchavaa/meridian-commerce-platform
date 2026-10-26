@@ -9,7 +9,11 @@
 set -euo pipefail
 
 ACTION="${1:-status}"
-PROJECT_ID="${PROJECT_ID:-cs-512516}"
+PROJECT_ID="${PROJECT_ID:-}"
+if [ -z "$PROJECT_ID" ]; then
+  echo "PROJECT_ID env var must be set (export PROJECT_ID=my-gcp-project)" >&2
+  exit 1
+fi
 
 case "$ACTION" in
   drain-central-gcp)

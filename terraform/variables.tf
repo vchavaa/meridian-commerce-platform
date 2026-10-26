@@ -1,7 +1,10 @@
 variable "project_id" {
-  description = "GCP Project ID where Meridian Commerce Platform resources will be provisioned."
+  description = "GCP Project ID where Meridian Commerce Platform resources will be provisioned. Required; supply via terraform.tfvars or -var."
   type        = string
-  default     = "cs-512516"
+  validation {
+    condition     = length(var.project_id) > 0 && var.project_id != "PROJECT_ID_PLACEHOLDER"
+    error_message = "project_id must be set to a real GCP project ID (not the placeholder)."
+  }
 }
 
 variable "environment" {

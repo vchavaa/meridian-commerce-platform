@@ -43,7 +43,7 @@ spec:
               app: order-service
       containers:
         - name: order-service
-          image: us-central1-docker.pkg.dev/cs-512516/meridian-containers/order-service:1.0.0
+          image: us-central1-docker.pkg.dev/PROJECT_ID_PLACEHOLDER/meridian-containers/order-service:1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8081

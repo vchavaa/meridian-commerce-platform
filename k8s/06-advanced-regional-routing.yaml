@@ -24,7 +24,7 @@ spec:
       serviceAccountName: meridian-app-ksa
       containers:
         - name: storefront-ui
-          image: us-central1-docker.pkg.dev/cs-512516/meridian-containers/storefront-ui:1.1.0-canary
+          image: us-central1-docker.pkg.dev/PROJECT_ID_PLACEHOLDER/meridian-containers/storefront-ui:1.1.0-canary
           ports:
             - containerPort: 8080
           envFrom:
